@@ -722,14 +722,9 @@ class WasmBuffer {
   final int size;
 
   Uint8List get data {
-    // As WebAssembly memory grows it might invalidate the JavaScript
-    // TypedArray views.
-    // In the event these views are detached, we need to recreate them.
-    // This can happen when loading large .riv files or when the WASM memory
-    // is expanded.
-    // Only recreate the data if it is empty and the pointer is not 0 (disposed).
-    // See: https://github.com/emscripten-core/emscripten/issues/7294
-    if (_data.isEmpty && _pointer != 0.toJS) {
+    // Memory growth detaches old heap views. dart2wasm caches their length,
+    // so isEmpty cannot detect detachment. Refresh every non-disposed access.
+    if (_pointer != 0.toJS) {
       _data = RiveWasm.heap((_pointer as js.JSNumber).toDartInt, size);
       return _data;
     }
