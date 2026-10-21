@@ -778,9 +778,11 @@ class WebRiveFile extends File {
     for (int i = 0; i < length; i++) {
       final jsProp = result.getProperty(i.toJS) as js.JSObject;
       final name = (jsProp.getProperty('name'.toJS) as js.JSString).toDart;
+      // JSArray.toDart converts the array, not its JS string elements.
       final values = (jsProp.getProperty('values'.toJS) as js.JSArray)
           .toDart
-          .cast<String>();
+          .map((e) => (e as js.JSString).toDart)
+          .toList();
       dataEnums.add(DataEnum(name, values));
     }
     return dataEnums;
