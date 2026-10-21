@@ -1,0 +1,114 @@
+<Rive version="1" kind="bundle">
+    <Artboard defaultStateMachineId="0:7" expandedComponents="0:14" selectedAnimations="0:7" includeInExport="false" clip="true" width="500" height="500" styleId="0:5" name="Artboard" id="0:2">
+        <Shape x="207.5" y="142" name="Rectangle" id="0:14">
+            <Rectangle width="179" height="136" name="Path" id="0:17"/>
+            <Fill version="0" name="Fill 1" id="0:15">
+                <SolidColor colorValue="FFFF0000" name="Component" id="0:16"/>
+            </Fill>
+        </Shape>
+        <Fill version="0" name="Fill 1" id="0:3">
+            <SolidColor colorValue="FF313131" name="Component" id="0:4"/>
+        </Fill>
+        <LayoutComponentStyle name="Layout Style" id="0:5"/>
+        <StateMachine editingLayerId="0:8" name="State Machine 1" id="0:7">
+            <StateMachineLayer stageZoom="0.92590481" stageX="454.21185" stageY="36.667332" name="Layer 1" id="0:8">
+                <AnyState x="100" y="200" id="0:9"/>
+                <ExitState x="300" y="200" id="0:10"/>
+                <EntryState x="100" id="0:11">
+                    <StateTransition stateToId="0:12" id="0:13"/>
+                </EntryState>
+                <AnimationState animationId="0:6" x="100" y="100" id="0:12"/>
+            </StateMachineLayer>
+        </StateMachine>
+        <LinearAnimation playhead="60" viewEnd="60" expandedComponents="0:14" name="Timeline 1" id="0:6">
+            <KeyedObject objectId="0:14" id="0:18">
+                <KeyedProperty propertyKey="13" id="0:19">
+                    <KeyFrameDouble value="300" interpolationType="1" id="0:20"/>
+                    <KeyFrameDouble value="410.5" interpolationType="1" frame="60" id="1:1"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="14" id="0:21">
+                    <KeyFrameDouble value="142" interpolationType="1" id="0:22"/>
+                    <KeyFrameDouble value="330" interpolationType="1" frame="60" id="1:2"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="15" id="0:23">
+                    <KeyFrameDouble interpolationType="1" id="0:24"/>
+                </KeyedProperty>
+            </KeyedObject>
+        </LinearAnimation>
+    </Artboard>
+    <Backboard coreVersion="1" activeArtboardId="0:2" mainArtboardId="0:2" stageX="186.41797" stageY="90.015625" stageZoom="1" id="0:1"/>
+    <DataEnumSystem id="1:0">
+        <DataEnumValue key="Left align" id="2:0"/>
+        <DataEnumValue key="Right align" id="3:0"/>
+        <DataEnumValue key="Center align" id="4:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="1" id="5:0">
+        <DataEnumValue key="Top align" id="6:0"/>
+        <DataEnumValue key="Middle align" id="7:0"/>
+        <DataEnumValue key="Bottom align" id="8:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="2" id="9:0">
+        <DataEnumValue key="Auto Width" id="10:0"/>
+        <DataEnumValue key="Auto Height" id="11:0"/>
+        <DataEnumValue key="Fixed Size" id="12:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="3" id="13:0">
+        <DataEnumValue key="Visible" id="14:0"/>
+        <DataEnumValue key="Hidden" id="15:0"/>
+        <DataEnumValue key="Clipped" id="16:0"/>
+        <DataEnumValue key="Ellipsis" id="17:0"/>
+        <DataEnumValue key="Fit" id="18:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="4" id="19:0">
+        <DataEnumValue key="Wrap" id="20:0"/>
+        <DataEnumValue key="No Wrap" id="21:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="5" id="22:0">
+        <DataEnumValue key="Column" id="23:0"/>
+        <DataEnumValue key="Column Reverse" id="24:0"/>
+        <DataEnumValue key="Row" id="25:0"/>
+        <DataEnumValue key="Row Reverse" id="26:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="6" id="27:0">
+        <DataEnumValue key="No Wrap" id="28:0"/>
+        <DataEnumValue key="Wrap" id="29:0"/>
+        <DataEnumValue key="Wrap Reverse" id="30:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="7" id="31:0">
+        <DataEnumValue key="Inherit" id="32:0"/>
+        <DataEnumValue key="Left to Right" id="33:0"/>
+        <DataEnumValue key="Right to Left" id="34:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="8" id="35:0">
+        <DataEnumValue key="Top Left" id="36:0"/>
+        <DataEnumValue key="Top Center" id="37:0"/>
+        <DataEnumValue key="Top Right" id="38:0"/>
+        <DataEnumValue key="Center Left" id="39:0"/>
+        <DataEnumValue key="Center" id="40:0"/>
+        <DataEnumValue key="Center Right" id="41:0"/>
+        <DataEnumValue key="Bottom Left" id="42:0"/>
+        <DataEnumValue key="Bottom Center" id="43:0"/>
+        <DataEnumValue key="Bottom Right" id="44:0"/>
+        <DataEnumValue key="Space Between Start" id="45:0"/>
+        <DataEnumValue key="Space Between Center" id="46:0"/>
+        <DataEnumValue key="Space Between End" id="47:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="9" id="48:0">
+        <DataEnumValue key="Show" id="49:0"/>
+        <DataEnumValue key="Hide" id="50:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="10" id="51:0">
+        <DataEnumValue key="Relative" id="52:0"/>
+        <DataEnumValue key="Absolute" id="53:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="11" id="54:0">
+        <DataEnumValue key="Fixed" id="55:0"/>
+        <DataEnumValue key="Fill" id="56:0"/>
+        <DataEnumValue key="Hug" id="57:0"/>
+    </DataEnumSystem>
+    <DataEnumSystem enumType="12" id="58:0">
+        <DataEnumValue key="Unset" id="59:0"/>
+        <DataEnumValue key="Pixels" id="60:0"/>
+        <DataEnumValue key="Percentage" id="61:0"/>
+    </DataEnumSystem>
+</Rive>
