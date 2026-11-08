@@ -231,6 +231,11 @@ public:
   {
     m_Width = 0;
     m_Height = 0;
+#if defined(RIVE_CANVAS) && defined(RIVE_ORE)
+    // Header size, so an Ore view can have its texture before the decode
+    // lands (prepForWrap). Width and height stay 0 until then.
+    rive::cmd::sniffImageSize(encodedBytes, m_headerWidth, m_headerHeight);
+#endif
 
     ref();
     decode_image(
@@ -253,6 +258,7 @@ public:
     m_Width = width;
     m_Height = height;
     m_readyToUpload = true;
+    uploadIntoEarlyTexture();
     decodedAsync();
   }
 
@@ -260,9 +266,22 @@ private:
   bool m_readyToUpload = false;
   EMSCRIPTEN_WEBGL_CONTEXT_HANDLE m_contextGL = 0;
   rcp<RiveRenderImage> m_renderImage;
+  int m_headerWidth = 0;
+  int m_headerHeight = 0;
+  // A texture prepForWrap made before the decode landed, still empty.
+  GLuint m_earlyTexture = 0;
+
+  void uploadIntoEarlyTexture();
 
 public:
   RenderImage* prep(
+      WebGL2Renderer* webglRenderer,
+      const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context);
+
+  // prep for a wrap that is made once, such as an Ore image view: a still
+  // decoding image gets a transparent texture at its header size, which the
+  // decode fills in when it lands. Null only when the size is unknown.
+  RenderImage* prepForWrap(
       WebGL2Renderer* webglRenderer,
       const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context);
 };
@@ -785,6 +804,16 @@ public:
                : image;
   }
 
+  // An Ore view wraps its image once, and the browser decode usually lands
+  // a frame or more after the first replay that asks for it.
+  rive::RenderImage* prepOreImage(rive::RenderImage* image) override
+  {
+    auto* webglImage = lite_rtti_cast<WebGL2RenderImage*>(image);
+    return webglImage != nullptr
+               ? webglImage->prepForWrap(m_renderer, m_renderer->contextGL())
+               : image;
+  }
+
   rive::Renderer* beginScreen(uint64_t target, bool clear, uint32_t color)
       override
   {
@@ -943,6 +972,8 @@ RenderImage* WebGL2RenderImage::prep(
   // otherwise we need to re-upload.
   if (context == m_contextGL && m_renderImage)
   {
+    // An early texture whose upload could not run when the decode landed.
+    uploadIntoEarlyTexture();
     return m_renderImage.get();
   }
   if (m_readyToUpload)
@@ -952,6 +983,7 @@ RenderImage* WebGL2RenderImage::prep(
       // Make sure to reset image on old context.
       ScopedGLContextMakeCurrent makeCurrent(m_contextGL);
       m_renderImage = nullptr;
+      m_earlyTexture = 0;
     }
     ScopedGLContextMakeCurrent makeCurrent(m_contextGL = context);
     if (!makeCurrent.ok())
@@ -981,7 +1013,88 @@ RenderImage* WebGL2RenderImage::prep(
         webglRenderer->renderContextGL()
             ->adoptImageTexture(m_Width, m_Height, textureId));
   }
+  // Still decoding, with an early texture on another context: contexts do
+  // not share textures, so there is nothing to hand out yet.
+  return context == m_contextGL ? m_renderImage.get() : nullptr;
+}
+
+RenderImage* WebGL2RenderImage::prepForWrap(
+    WebGL2Renderer* webglRenderer,
+    const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
+{
+  if (m_readyToUpload || m_renderImage || m_headerWidth <= 0 ||
+      m_headerHeight <= 0)
+  {
+    // Decoded, already has a texture, or no size to make one at.
+    return prep(webglRenderer, context);
+  }
+  ScopedGLContextMakeCurrent makeCurrent(m_contextGL = context);
+  if (!makeCurrent.ok())
+  {
+    return nullptr;
+  }
+  GLuint textureId = 0;
+  glGenTextures(1, &textureId);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, textureId);
+  webglRenderer->renderContextGL()->state()->bindBuffer(
+      GL_PIXEL_UNPACK_BUFFER,
+      0);
+  // WebGL zero fills a null upload, so it samples transparent until the
+  // decode lands. The mips make it complete for a mipmapped sampler.
+  glTexImage2D(
+      GL_TEXTURE_2D,
+      0,
+      GL_RGBA,
+      m_headerWidth,
+      m_headerHeight,
+      0,
+      GL_RGBA,
+      GL_UNSIGNED_BYTE,
+      nullptr);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glTexParameteri(
+      GL_TEXTURE_2D,
+      GL_TEXTURE_MIN_FILTER,
+      GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  m_earlyTexture = textureId;
+  m_renderImage = make_rcp<RiveRenderImage>(
+      webglRenderer->renderContextGL()
+          ->adoptImageTexture(m_headerWidth, m_headerHeight, textureId));
   return m_renderImage.get();
+}
+
+void WebGL2RenderImage::uploadIntoEarlyTexture()
+{
+  if (m_earlyTexture == 0 || !m_readyToUpload)
+  {
+    return;
+  }
+  ScopedGLContextMakeCurrent makeCurrent(m_contextGL);
+  if (!makeCurrent.ok())
+  {
+    return; // the next prep on this context retries
+  }
+  // Runs between frames when the decode lands, or inside one from prep, so
+  // every binding it touches goes back the way it was.
+  GLint activeTexture = 0, boundTexture = 0, unpackBuffer = 0;
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+  glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTexture);
+  glBindTexture(GL_TEXTURE_2D, m_earlyTexture);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+  upload_image(
+      emscripten_webgl_get_current_context(),
+      reinterpret_cast<uintptr_t>(this));
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpackBuffer));
+  glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(boundTexture));
+  glActiveTexture(static_cast<GLenum>(activeTexture));
+  m_earlyTexture = 0;
 }
 
 PLSSynchronizedBuffer::PLSSynchronizedBuffer(
