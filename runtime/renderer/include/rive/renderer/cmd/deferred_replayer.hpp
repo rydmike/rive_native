@@ -83,6 +83,16 @@ public:
   // already RiveRenderImages by the time they reach replay. Also asked for
   // the decoded images a paint samples, null leaving that paint unimaged.
   virtual RenderImage* prepForeignImage(RenderImage* image) { return image; }
+
+  // The image an Ore image view wraps. The wrap is made once, so a null here
+  // loses the view and every bind group made on it for good, where a 2D draw
+  // or a paint simply asks again next frame. Backends whose images decode
+  // asynchronously return a texture that fills in when the decode lands;
+  // the default preps like a foreign image.
+  virtual RenderImage* prepOreImage(RenderImage* image)
+  {
+    return prepForeignImage(image);
+  }
 };
 
 // Immutable snapshot of one recorded frame so the producer can record the next
@@ -343,15 +353,14 @@ private:
             // A flagged id is a foreign image the recorder was handed
             // rather than created, so it lives in the registry, not
             // the 2D mint space. Same convention drawImage uses.
-            if (imageId & kCanvasHandleFlag)
-            {
-              RenderImage* foreign = canvasImage(imageId & kCanvasHandleMask);
-              return foreign != nullptr ? sink.prepForeignImage(foreign)
-                                        : nullptr;
-            }
-            // Resident 2D image, created by the hoisted create pass
-            // or an earlier frame.
-            return m_2d.images.get(imageId);
+            // Otherwise it is a resident 2D image, created by the
+            // hoisted create pass or an earlier frame. Both go through
+            // the sink: a resident image can be a context agnostic one
+            // (web) that only the sink turns into a RiveRenderImage.
+            RenderImage* image = (imageId & kCanvasHandleFlag)
+                                     ? canvasImage(imageId & kCanvasHandleMask)
+                                     : m_2d.images.get(imageId);
+            return image != nullptr ? sink.prepOreImage(image) : nullptr;
           });
       realOre->setRenderTarget(nullptr);
       sink.endOreFrame();
