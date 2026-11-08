@@ -5,4 +5,30 @@ library;
 
 export 'src/ffi/rive_markup_ffi.dart'
     if (dart.library.js_interop) 'src/web/rive_markup_web.dart'
-    show revToRml, rmlToRev, RmlCompileResult, markupAvailable;
+    show
+        revToRml,
+        rmlToRev,
+        RmlCompileResult,
+        RmlCompileError,
+        markupAvailable,
+        rmlSchemaDescribe,
+        rmlSchemaSearch,
+        rmlSchemaTypes,
+        rmlInspect,
+        RmlProblem,
+        rmlCommitDiff,
+        RmlCommitDiff,
+        RmlCommitEntry,
+        RmlCommitRequire,
+        RmlCommitSkip,
+        RmlOrderGroup,
+        revToRmlFiles,
+        rmlToRevFiles,
+        rmlCommitDiffFiles,
+        RmlFileInput,
+        RmlExportedFile,
+        RmlExportedProject,
+        RmlFileReference,
+        RmlProjectCompileResult,
+        encodeRmlFileInputs,
+        decodeRmlExportedFiles;

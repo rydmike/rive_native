@@ -6,14 +6,27 @@
 namespace rive
 {
 class Component;
+class Core;
 class AdvancingComponent
 {
 public:
-    virtual bool advanceComponent(
-        float elapsedSeconds,
-        AdvanceFlags flags = AdvanceFlags::Animate |
-                             AdvanceFlags::NewFrame) = 0;
-    static AdvancingComponent* from(Core* component);
+  virtual bool advanceComponent(
+      float elapsedSeconds,
+      AdvanceFlags flags = AdvanceFlags::Animate | AdvanceFlags::NewFrame) = 0;
+
+  // Whether advanceComponent would currently do nothing: `quiet` when it
+  // would return false having changed nothing, `busy` when it would do work.
+  // `never` is for components that can't say, which keeps the artboard
+  // hosting them from ever being skipped (see ArtboardComponentList's quiet
+  // rows).
+  enum class QuietState
+  {
+    never,
+    busy,
+    quiet,
+  };
+  virtual QuietState quietState() { return QuietState::never; }
+  static AdvancingComponent* from(Core* component);
 };
 } // namespace rive
 

@@ -21,7 +21,7 @@ namespace sinks
 template <typename Mutex> class syslog_sink : public base_sink<Mutex>
 {
 public:
-    syslog_sink(std::string ident,
+  syslog_sink(std::string ident,
                 int syslog_option,
                 int syslog_facility,
                 bool enable_formatting) :
@@ -34,65 +34,66 @@ public:
                         /* spdlog::level::critical   */ LOG_CRIT,
                         /* spdlog::level::off        */ LOG_INFO}},
         ident_{std::move(ident)}
-    {
-        // set ident to be program name if empty
-        ::openlog(ident_.empty() ? nullptr : ident_.c_str(),
-                  syslog_option,
-                  syslog_facility);
-    }
+  {
+    // set ident to be program name if empty
+    ::openlog(
+        ident_.empty() ? nullptr : ident_.c_str(),
+        syslog_option,
+        syslog_facility);
+  }
 
-    ~syslog_sink() override { ::closelog(); }
+  ~syslog_sink() override { ::closelog(); }
 
-    syslog_sink(const syslog_sink&) = delete;
-    syslog_sink& operator=(const syslog_sink&) = delete;
+  syslog_sink(const syslog_sink&) = delete;
+  syslog_sink& operator=(const syslog_sink&) = delete;
 
 protected:
-    void sink_it_(const details::log_msg& msg) override
+  void sink_it_(const details::log_msg& msg) override
+  {
+    string_view_t payload;
+    memory_buf_t formatted;
+    if (enable_formatting_)
     {
-        string_view_t payload;
-        memory_buf_t formatted;
-        if (enable_formatting_)
-        {
-            base_sink<Mutex>::formatter_->format(msg, formatted);
-            payload = string_view_t(formatted.data(), formatted.size());
-        }
-        else
-        {
-            payload = msg.payload;
-        }
-
-        size_t length = payload.size();
-        // limit to max int
-        if (length > static_cast<size_t>(std::numeric_limits<int>::max()))
-        {
-            length = static_cast<size_t>(std::numeric_limits<int>::max());
-        }
-
-        ::syslog(syslog_prio_from_level(msg),
-                 "%.*s",
-                 static_cast<int>(length),
-                 payload.data());
+      base_sink<Mutex>::formatter_->format(msg, formatted);
+      payload = string_view_t(formatted.data(), formatted.size());
+    }
+    else
+    {
+      payload = msg.payload;
     }
 
-    void flush_() override {}
-    bool enable_formatting_ = false;
-
-    //
-    // Simply maps spdlog's log level to syslog priority level.
-    //
-    virtual int syslog_prio_from_level(const details::log_msg& msg) const
+    size_t length = payload.size();
+    // limit to max int
+    if (length > static_cast<size_t>(std::numeric_limits<int>::max()))
     {
-        return syslog_levels_.at(
-            static_cast<levels_array::size_type>(msg.level));
+      length = static_cast<size_t>(std::numeric_limits<int>::max());
     }
 
-    using levels_array = std::array<int, 7>;
-    levels_array syslog_levels_;
+    ::syslog(
+        syslog_prio_from_level(msg),
+        "%.*s",
+        static_cast<int>(length),
+        payload.data());
+  }
+
+  void flush_() override {}
+  bool enable_formatting_ = false;
+
+  //
+  // Simply maps spdlog's log level to syslog priority level.
+  //
+  virtual int syslog_prio_from_level(const details::log_msg& msg) const
+  {
+    return syslog_levels_.at(static_cast<levels_array::size_type>(msg.level));
+  }
+
+  using levels_array = std::array<int, 7>;
+  levels_array syslog_levels_;
 
 private:
-    // must store the ident because the man says openlog might use the pointer
-    // as is and not a string copy
-    const std::string ident_;
+  // must store the ident because the man says openlog might use the pointer
+  // as is and not a string copy
+  const std::string ident_;
 };
 
 using syslog_sink_mt = syslog_sink<std::mutex>;
@@ -108,11 +109,12 @@ inline std::shared_ptr<logger> syslog_logger_mt(
     int syslog_facility = LOG_USER,
     bool enable_formatting = false)
 {
-    return Factory::template create<sinks::syslog_sink_mt>(logger_name,
-                                                           syslog_ident,
-                                                           syslog_option,
-                                                           syslog_facility,
-                                                           enable_formatting);
+  return Factory::template create<sinks::syslog_sink_mt>(
+      logger_name,
+      syslog_ident,
+      syslog_option,
+      syslog_facility,
+      enable_formatting);
 }
 
 template <typename Factory = spdlog::synchronous_factory>
@@ -123,10 +125,11 @@ inline std::shared_ptr<logger> syslog_logger_st(
     int syslog_facility = LOG_USER,
     bool enable_formatting = false)
 {
-    return Factory::template create<sinks::syslog_sink_st>(logger_name,
-                                                           syslog_ident,
-                                                           syslog_option,
-                                                           syslog_facility,
-                                                           enable_formatting);
+  return Factory::template create<sinks::syslog_sink_st>(
+      logger_name,
+      syslog_ident,
+      syslog_option,
+      syslog_facility,
+      enable_formatting);
 }
 } // namespace spdlog

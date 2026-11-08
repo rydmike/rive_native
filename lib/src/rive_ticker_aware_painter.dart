@@ -20,4 +20,13 @@ base mixin RiveTickerAwarePainterMixin on RivePainter {
   void setTickerStateProvider(bool Function()? provider) {
     _tickerStateProvider = provider;
   }
+
+  /// Clears the ticker state provider only if it is still [provider], so an
+  /// owner that was replaced cannot clear its successor's.
+  @internal
+  void clearTickerStateProvider(bool Function() provider) {
+    if (_tickerStateProvider == provider) {
+      _tickerStateProvider = null;
+    }
+  }
 }

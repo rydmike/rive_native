@@ -81,6 +81,54 @@ dart run rive_native:setup --verbose --clean --build --platform macos
 
 See [Building rive_native](https://rive.app/docs/runtimes/flutter/rive-native#building-rive_native) in the official docs for the required tooling per platform, supported `--platform` values, web specifics, and how to return to the prebuilt libraries.
 
+### Scripting flavors
+
+The editor library carries a scripting backend chosen at build time with
+`--scripting_vm=<luau|wasm|both>` on `native/build.sh`, for every lane the
+script builds (native and wasm). The artifact layout, the podspec and the web
+glue are the same for every flavor; only the library differs.
+
+| Flavor | Library carries | Scripts run on |
+|---|---|---|
+| `luau` (default) | the Luau VM | Luau |
+| `wasm` | WAMR; the runtime and bindings carry no Luau, only the analyzer's type function interpreter keeps `libluau_vm.a` | the wasm VM; Luau scripts still type check, complete and report problems, they just do not run |
+| `both` | both VMs | whichever the file's backboard picks |
+
+Each flavor keeps its own intermediate tree under `native/out`, so switching
+flavors never needs a `clean`. Every native flavor folds the bake's binaryen
+into `librive.a`, and the wasm and both flavors fold WAMR in as well.
+
+The Dart side follows the library through the `RIVE_SCRIPTING` define, read
+once as `riveScriptingFlavor` in `rive_native` and defaulting to `luau`. Every
+Luau only or wasm only code path branches on it, so the unused backend is tree
+shaken and its bindings are never looked up. Build the editor with the define
+matching the library:
+
+```bash
+cd packages/rive_native/native && ./build.sh --scripting_vm=wasm release
+cd packages/editor && flutter run -d macos --dart-define=RIVE_SCRIPTING=wasm
+```
+
+Exports bake AnimaScript scripts into one wasm module per file in the
+exporting process, written unsigned as the `scripts_as` module asset ahead
+of the scripts it serves. Every flavor carries the bake and rasc's std, so a
+Luau only library, such as the one peon_worker exports with, bakes AnimaScript
+too. Only Luau and WGSL reach the signer, so the scripts compile worker needs
+neither the library flavor nor rasc's std tree.
+
+For web: `./build.sh --scripting_vm=wasm wasm release` then
+`flutter build web --dart-define=RIVE_ENVIRONMENT=development --dart-define=RIVE_SCRIPTING=wasm`.
+WAMR has no emscripten platform layer, so the browser lane of the wasm and
+both flavors builds without a wasm VM: `both` runs Luau there and `wasm` runs
+no scripts until the browser engine backend lands.
+
+With `both`, each file runs on the VM its backboard picks, and the
+`ENABLE_WASM_SCRIPTING` feature flag gates choosing the wasm VM and porting to
+it. Desktop releases ship `both`, with the flag on in UAT and off in prod.
+AnimaScript
+sources bake through rasc, whose std tree the editor finds in a repo checkout
+or through `RIVE_RASC_STD`.
+
 ---
 
 ## Testing

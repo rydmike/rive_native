@@ -13,8 +13,8 @@ namespace
 {
 struct LuaAtomName
 {
-    std::string_view name;
-    int16_t atom;
+  std::string_view name;
+  int16_t atom;
 };
 
 constexpr LuaAtomName atoms[] = {
@@ -51,6 +51,7 @@ constexpr LuaAtomName atoms[] = {
     {"blendMode", (int16_t)LuaAtoms::blendMode},
     {"feather", (int16_t)LuaAtoms::feather},
     {"gradient", (int16_t)LuaAtoms::gradient},
+    {"gradientTransform", (int16_t)LuaAtoms::gradientTransform},
     {"color", (int16_t)LuaAtoms::color},
     {"stroke", (int16_t)LuaAtoms::stroke},
     {"fill", (int16_t)LuaAtoms::fill},
@@ -279,6 +280,8 @@ constexpr LuaAtomName atoms[] = {
     {"features", (int16_t)LuaAtoms::features},
     {"shader", (int16_t)LuaAtoms::shader},
     {"format", (int16_t)LuaAtoms::format},
+    {"gpuTarget", (int16_t)LuaAtoms::gpuTarget},
+    {"sampleCount", (int16_t)LuaAtoms::sampleCount},
     {"andThen", (int16_t)LuaAtoms::andThen},
     {"catch", (int16_t)LuaAtoms::catch_},
     {"finally", (int16_t)LuaAtoms::finally_},
@@ -302,78 +305,192 @@ constexpr LuaAtomName atoms[] = {
     {"number", (int16_t)LuaAtoms::number},
     {"boolean", (int16_t)LuaAtoms::boolean},
     {"string", (int16_t)LuaAtoms::string},
+    // Fetch Response
+    {"status", (int16_t)LuaAtoms::status},
+    {"statusText", (int16_t)LuaAtoms::statusText},
+    {"ok", (int16_t)LuaAtoms::ok},
+    {"url", (int16_t)LuaAtoms::url},
+    {"headers", (int16_t)LuaAtoms::headers},
+    {"arrayBuffer", (int16_t)LuaAtoms::arrayBuffer},
+    {"header", (int16_t)LuaAtoms::header},
+    // Decoded Rive files
+    {"decodeFile", (int16_t)LuaAtoms::decodeFile},
+    {"artboardNames", (int16_t)LuaAtoms::artboardNames},
+    {"bindableArtboard", (int16_t)LuaAtoms::bindableArtboard},
+    {"getArtboard", (int16_t)LuaAtoms::getArtboard},
 #ifdef WITH_RIVE_TOOLS
     {"properties", (int16_t)LuaAtoms::properties},
 #endif
+    {"append", (int16_t)LuaAtoms::append},
+    {"line", (int16_t)LuaAtoms::line},
+    {"lines", (int16_t)LuaAtoms::lines},
+    {"hitTest", (int16_t)LuaAtoms::hitTest},
+    {"caret", (int16_t)LuaAtoms::caret},
+    {"selectionRects", (int16_t)LuaAtoms::selectionRects},
+    {"glyph", (int16_t)LuaAtoms::glyph},
+    {"glyphs", (int16_t)LuaAtoms::glyphs},
+    {"path", (int16_t)LuaAtoms::path},
+    {"glyphPath", (int16_t)LuaAtoms::glyphPath},
+    {"withOptions", (int16_t)LuaAtoms::withOptions},
+    {"hasGlyph", (int16_t)LuaAtoms::hasGlyph},
+    {"axisValue", (int16_t)LuaAtoms::axisValue},
+    {"lineHeight", (int16_t)LuaAtoms::lineHeight},
+    {"decode", (int16_t)LuaAtoms::decode},
+    {"font", (int16_t)LuaAtoms::font},
+    {"ascent", (int16_t)LuaAtoms::ascent},
+    {"descent", (int16_t)LuaAtoms::descent},
+    {"capHeight", (int16_t)LuaAtoms::capHeight},
+    {"xHeight", (int16_t)LuaAtoms::xHeight},
+    {"weight", (int16_t)LuaAtoms::weight},
+    {"isItalic", (int16_t)LuaAtoms::isItalic},
+    {"sizing", (int16_t)LuaAtoms::sizing},
+    {"overflow", (int16_t)LuaAtoms::overflow},
+    {"align", (int16_t)LuaAtoms::align},
+    {"wrap", (int16_t)LuaAtoms::wrap},
+    {"wordBreak", (int16_t)LuaAtoms::wordBreak},
+    {"origin", (int16_t)LuaAtoms::origin},
+    {"direction", (int16_t)LuaAtoms::direction},
+    {"maxWidth", (int16_t)LuaAtoms::maxWidth},
+    {"maxHeight", (int16_t)LuaAtoms::maxHeight},
+    {"paragraphSpacing", (int16_t)LuaAtoms::paragraphSpacing},
+    {"lineCount", (int16_t)LuaAtoms::lineCount},
+    {"glyphCount", (int16_t)LuaAtoms::glyphCount},
+    {"baseline", (int16_t)LuaAtoms::baseline},
+    {"bottom", (int16_t)LuaAtoms::bottom},
+    {"top", (int16_t)LuaAtoms::top},
+    {"textIndex", (int16_t)LuaAtoms::textIndex},
+    {"firstIndex", (int16_t)LuaAtoms::firstIndex},
+    {"lastIndex", (int16_t)LuaAtoms::lastIndex},
+    {"x", (int16_t)LuaAtoms::x},
+    {"y", (int16_t)LuaAtoms::y},
+    {"isEmpty", (int16_t)LuaAtoms::isEmpty},
+    {"index", (int16_t)LuaAtoms::index},
+    {"ltr", (int16_t)LuaAtoms::ltr},
+    {"rtl", (int16_t)LuaAtoms::rtl},
+    {"auto", (int16_t)LuaAtoms::autoDetect},
+    {"left", (int16_t)LuaAtoms::left},
+    {"right", (int16_t)LuaAtoms::right},
+    {"center", (int16_t)LuaAtoms::center},
+    {"end", (int16_t)LuaAtoms::end},
+    {"autoWidth", (int16_t)LuaAtoms::autoWidth},
+    {"autoHeight", (int16_t)LuaAtoms::autoHeight},
+    {"fixed", (int16_t)LuaAtoms::fixed},
+    {"visible", (int16_t)LuaAtoms::visible},
+    {"hidden", (int16_t)LuaAtoms::hidden},
+    {"clipped", (int16_t)LuaAtoms::clipped},
+    {"ellipsis", (int16_t)LuaAtoms::ellipsis},
+    {"noWrap", (int16_t)LuaAtoms::noWrap},
+    {"breakWord", (int16_t)LuaAtoms::breakWord},
+    {"normal", (int16_t)LuaAtoms::normal},
+    {"breakAll", (int16_t)LuaAtoms::breakAll},
+    {"letterSpacing", (int16_t)LuaAtoms::letterSpacing},
+    {"foregroundColor", (int16_t)LuaAtoms::foregroundColor},
+    {"min", (int16_t)LuaAtoms::min},
+    {"max", (int16_t)LuaAtoms::max},
+    {"default", (int16_t)LuaAtoms::defaultValue},
+    {"delta", (int16_t)LuaAtoms::delta},
+    {"precise", (int16_t)LuaAtoms::precise},
+    {"pointerScroll", (int16_t)LuaAtoms::pointerScroll},
 };
 
 constexpr size_t atomCount = std::size(atoms);
 // Power of two so the modulo is a mask, and roomy enough to keep probes short.
+constexpr bool hasAtom(LuaAtoms atom)
+{
+  for (const LuaAtomName& row : atoms)
+  {
+    if (row.atom == (int16_t)atom)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+constexpr bool hasAtomRange(LuaAtoms first, LuaAtoms last)
+{
+  for (int16_t atom = (int16_t)first; atom <= (int16_t)last; atom++)
+  {
+    if (!hasAtom((LuaAtoms)atom))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The text and scroll atoms follow the tools only ones; a guard swallowing
+// them only shows in a runtime build, which the test binaries never are.
+static_assert(
+    hasAtomRange(LuaAtoms::append, LuaAtoms::pointerScroll),
+    "text and scroll atoms must register in every build");
+
 constexpr size_t atomSlotCount = 1024;
-static_assert(atomCount < atomSlotCount,
-              "atomSlotCount must exceed the number of atoms");
+static_assert(
+    atomCount < atomSlotCount,
+    "atomSlotCount must exceed the number of atoms");
 
 constexpr uint32_t hashAtomName(std::string_view name)
 {
-    uint32_t hash = 2166136261u;
-    for (char c : name)
-    {
-        hash = (hash ^ (uint8_t)c) * 16777619u;
-    }
-    return hash;
+  uint32_t hash = 2166136261u;
+  for (char c : name)
+  {
+    hash = (hash ^ (uint8_t)c) * 16777619u;
+  }
+  return hash;
 }
 
 constexpr size_t longestAtomName()
 {
-    size_t longest = 0;
-    for (const LuaAtomName& entry : atoms)
+  size_t longest = 0;
+  for (const LuaAtomName& entry : atoms)
+  {
+    if (entry.name.size() > longest)
     {
-        if (entry.name.size() > longest)
-        {
-            longest = entry.name.size();
-        }
+      longest = entry.name.size();
     }
-    return longest;
+  }
+  return longest;
 }
 constexpr size_t maxAtomNameLength = longestAtomName();
 
 // Slots hold an index into atoms biased by one so zero reads as empty.
 constexpr std::array<uint16_t, atomSlotCount> buildAtomSlots()
 {
-    std::array<uint16_t, atomSlotCount> slots{};
-    for (size_t i = 0; i < atomCount; i++)
+  std::array<uint16_t, atomSlotCount> slots{};
+  for (size_t i = 0; i < atomCount; i++)
+  {
+    size_t slot = hashAtomName(atoms[i].name) & (atomSlotCount - 1);
+    while (slots[slot] != 0 && atoms[slots[slot] - 1].name != atoms[i].name)
     {
-        size_t slot = hashAtomName(atoms[i].name) & (atomSlotCount - 1);
-        while (slots[slot] != 0 && atoms[slots[slot] - 1].name != atoms[i].name)
-        {
-            slot = (slot + 1) & (atomSlotCount - 1);
-        }
-        if (slots[slot] == 0)
-        {
-            slots[slot] = (uint16_t)(i + 1);
-        }
+      slot = (slot + 1) & (atomSlotCount - 1);
     }
-    return slots;
+    if (slots[slot] == 0)
+    {
+      slots[slot] = (uint16_t)(i + 1);
+    }
+  }
+  return slots;
 }
 constexpr std::array<uint16_t, atomSlotCount> atomSlots = buildAtomSlots();
 
 int16_t findAtom(const char* chars, size_t length)
 {
-    if (length > maxAtomNameLength)
-    {
-        return -1;
-    }
-    std::string_view name(chars, length);
-    size_t slot = hashAtomName(name) & (atomSlotCount - 1);
-    for (uint16_t index = atomSlots[slot]; index != 0;
-         index = atomSlots[slot = (slot + 1) & (atomSlotCount - 1)])
-    {
-        if (atoms[index - 1].name == name)
-        {
-            return atoms[index - 1].atom;
-        }
-    }
+  if (length > maxAtomNameLength)
+  {
     return -1;
+  }
+  std::string_view name(chars, length);
+  size_t slot = hashAtomName(name) & (atomSlotCount - 1);
+  for (uint16_t index = atomSlots[slot]; index != 0;
+       index = atomSlots[slot = (slot + 1) & (atomSlotCount - 1)])
+  {
+    if (atoms[index - 1].name == name)
+    {
+      return atoms[index - 1].atom;
+    }
+  }
+  return -1;
 }
 } // namespace
 
@@ -381,7 +498,7 @@ namespace rive
 {
 int16_t rive_lua_findAtom(const char* chars, size_t length)
 {
-    return findAtom(chars, length);
+  return findAtom(chars, length);
 }
 } // namespace rive
 #endif

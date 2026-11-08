@@ -22,16 +22,16 @@
         </StateMachine>
         <LinearAnimation playhead="60" viewEnd="60" expandedComponents="0:14" name="Timeline 1" id="0:6">
             <KeyedObject objectId="0:14" id="0:18">
-                <KeyedProperty propertyKey="13" id="0:19">
-                    <KeyFrameDouble value="300" interpolationType="1" id="0:20"/>
-                    <KeyFrameDouble value="410.5" interpolationType="1" frame="60" id="1:1"/>
+                <KeyedProperty property="x" id="0:19">
+                    <KeyFrameDouble value="300" interpolationType="linear" id="0:20"/>
+                    <KeyFrameDouble value="410.5" interpolationType="linear" frame="60" id="1:1"/>
                 </KeyedProperty>
-                <KeyedProperty propertyKey="14" id="0:21">
-                    <KeyFrameDouble value="142" interpolationType="1" id="0:22"/>
-                    <KeyFrameDouble value="330" interpolationType="1" frame="60" id="1:2"/>
+                <KeyedProperty property="y" id="0:21">
+                    <KeyFrameDouble value="142" interpolationType="linear" id="0:22"/>
+                    <KeyFrameDouble value="330" interpolationType="linear" frame="60" id="1:2"/>
                 </KeyedProperty>
-                <KeyedProperty propertyKey="15" id="0:23">
-                    <KeyFrameDouble interpolationType="1" id="0:24"/>
+                <KeyedProperty property="rotation" id="0:23">
+                    <KeyFrameDouble interpolationType="linear" id="0:24"/>
                 </KeyedProperty>
             </KeyedObject>
         </LinearAnimation>
@@ -42,44 +42,44 @@
         <DataEnumValue key="Right align" id="3:0"/>
         <DataEnumValue key="Center align" id="4:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="1" id="5:0">
+    <DataEnumSystem enumType="verticalTextAlign" id="5:0">
         <DataEnumValue key="Top align" id="6:0"/>
         <DataEnumValue key="Middle align" id="7:0"/>
         <DataEnumValue key="Bottom align" id="8:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="2" id="9:0">
+    <DataEnumSystem enumType="textBox" id="9:0">
         <DataEnumValue key="Auto Width" id="10:0"/>
         <DataEnumValue key="Auto Height" id="11:0"/>
         <DataEnumValue key="Fixed Size" id="12:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="3" id="13:0">
+    <DataEnumSystem enumType="textOverflow" id="13:0">
         <DataEnumValue key="Visible" id="14:0"/>
         <DataEnumValue key="Hidden" id="15:0"/>
         <DataEnumValue key="Clipped" id="16:0"/>
         <DataEnumValue key="Ellipsis" id="17:0"/>
         <DataEnumValue key="Fit" id="18:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="4" id="19:0">
+    <DataEnumSystem enumType="wordWrap" id="19:0">
         <DataEnumValue key="Wrap" id="20:0"/>
         <DataEnumValue key="No Wrap" id="21:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="5" id="22:0">
+    <DataEnumSystem enumType="layoutFlexDirection" id="22:0">
         <DataEnumValue key="Column" id="23:0"/>
         <DataEnumValue key="Column Reverse" id="24:0"/>
         <DataEnumValue key="Row" id="25:0"/>
         <DataEnumValue key="Row Reverse" id="26:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="6" id="27:0">
+    <DataEnumSystem enumType="layoutWrap" id="27:0">
         <DataEnumValue key="No Wrap" id="28:0"/>
         <DataEnumValue key="Wrap" id="29:0"/>
         <DataEnumValue key="Wrap Reverse" id="30:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="7" id="31:0">
+    <DataEnumSystem enumType="layoutDirection" id="31:0">
         <DataEnumValue key="Inherit" id="32:0"/>
         <DataEnumValue key="Left to Right" id="33:0"/>
         <DataEnumValue key="Right to Left" id="34:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="8" id="35:0">
+    <DataEnumSystem enumType="layoutAlignment" id="35:0">
         <DataEnumValue key="Top Left" id="36:0"/>
         <DataEnumValue key="Top Center" id="37:0"/>
         <DataEnumValue key="Top Right" id="38:0"/>
@@ -93,20 +93,20 @@
         <DataEnumValue key="Space Between Center" id="46:0"/>
         <DataEnumValue key="Space Between End" id="47:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="9" id="48:0">
+    <DataEnumSystem enumType="layoutDisplay" id="48:0">
         <DataEnumValue key="Show" id="49:0"/>
         <DataEnumValue key="Hide" id="50:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="10" id="51:0">
+    <DataEnumSystem enumType="layoutPosition" id="51:0">
         <DataEnumValue key="Relative" id="52:0"/>
         <DataEnumValue key="Absolute" id="53:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="11" id="54:0">
+    <DataEnumSystem enumType="layoutScaleType" id="54:0">
         <DataEnumValue key="Fixed" id="55:0"/>
         <DataEnumValue key="Fill" id="56:0"/>
         <DataEnumValue key="Hug" id="57:0"/>
     </DataEnumSystem>
-    <DataEnumSystem enumType="12" id="58:0">
+    <DataEnumSystem enumType="layoutPositionUnits" id="58:0">
         <DataEnumValue key="Unset" id="59:0"/>
         <DataEnumValue key="Pixels" id="60:0"/>
         <DataEnumValue key="Percentage" id="61:0"/>

@@ -14,7 +14,7 @@ G_BEGIN_DECLS
 typedef struct _RiveNativePlugin RiveNativePlugin;
 typedef struct
 {
-    GObjectClass parent_class;
+  GObjectClass parent_class;
 } RiveNativePluginClass;
 
 FLUTTER_PLUGIN_EXPORT GType rive_native_plugin_get_type();

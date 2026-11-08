@@ -1,5 +1,6 @@
 import 'dart:collection';
 import 'dart:ffi';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:rive_native/layout_engine.dart';
@@ -437,32 +438,48 @@ final int Function(Pointer<Void>) _yogaNodeGetGridColumnLineCount = _nativeLib
         'yogaNodeGetGridColumnLineCount')
     .asFunction();
 
-final double Function(Pointer<Void>, int) _yogaNodeGetGridColumnLineOffset =
-    _nativeLib
-        .lookup<NativeFunction<Float Function(Pointer<Void>, Uint32)>>(
-            'yogaNodeGetGridColumnLineOffset')
-        .asFunction();
-
 final int Function(Pointer<Void>) _yogaNodeGetGridRowLineCount = _nativeLib
     .lookup<NativeFunction<Uint32 Function(Pointer<Void>)>>(
         'yogaNodeGetGridRowLineCount')
     .asFunction();
 
-final double Function(Pointer<Void>, int) _yogaNodeGetGridRowLineOffset =
-    _nativeLib
-        .lookup<NativeFunction<Float Function(Pointer<Void>, Uint32)>>(
-            'yogaNodeGetGridRowLineOffset')
+final bool Function(Pointer<Void>, Pointer<Float>, int, Pointer<Float>, int)
+    _yogaNodeSetGridVirtualContributions = _nativeLib
+        .lookup<
+            NativeFunction<
+                Bool Function(Pointer<Void>, Pointer<Float>, Uint32,
+                    Pointer<Float>, Uint32)>>(
+          'yogaNodeSetGridVirtualContributions',
+        )
         .asFunction();
 
-List<double> _readGridLineOffsets(
-    Pointer<Void> ptr,
-    int Function(Pointer<Void>) count,
-    double Function(Pointer<Void>, int) offset) {
-  final n = count(ptr);
-  if (n == 0) {
+final int Function(Pointer<Void>, bool, Pointer<Float>, int)
+    _yogaNodeCopyGridLineOffsets = _nativeLib
+        .lookup<
+            NativeFunction<
+                Uint32 Function(Pointer<Void>, Bool, Pointer<Float>, Uint32)>>(
+          'yogaNodeCopyGridLineOffsets',
+        )
+        .asFunction();
+
+final double Function(Pointer<Void>, bool) _yogaNodeGetGridGap = _nativeLib
+    .lookup<NativeFunction<Float Function(Pointer<Void>, Bool)>>(
+        'yogaNodeGetGridGap')
+    .asFunction();
+
+// One copy for every line: a virtualized grid has one per row.
+List<double> _readGridLineOffsets(Pointer<Void> ptr, bool rows) {
+  final count = rows
+      ? _yogaNodeGetGridRowLineCount(ptr)
+      : _yogaNodeGetGridColumnLineCount(ptr);
+  if (count == 0) {
     return const [];
   }
-  return List<double>.generate(n, (i) => offset(ptr, i), growable: false);
+  final buffer = calloc<Float>(count);
+  _yogaNodeCopyGridLineOffsets(ptr, rows, buffer, count);
+  final lines = Float32List.fromList(buffer.asTypedList(count));
+  calloc.free(buffer);
+  return lines;
 }
 
 final class _YGSize extends Struct {
@@ -561,14 +578,33 @@ class LayoutNodeFFI extends LayoutNode implements Finalizable {
       _yogaNodeGetPadding(_nativePtr).toPadding();
 
   @override
-  List<double> get gridColumnLineOffsets => _readGridLineOffsets(
-      _nativePtr,
-      _yogaNodeGetGridColumnLineCount,
-      _yogaNodeGetGridColumnLineOffset);
+  List<double> get gridColumnLineOffsets =>
+      _readGridLineOffsets(_nativePtr, false);
 
   @override
-  List<double> get gridRowLineOffsets => _readGridLineOffsets(_nativePtr,
-      _yogaNodeGetGridRowLineCount, _yogaNodeGetGridRowLineOffset);
+  List<double> get gridRowLineOffsets => _readGridLineOffsets(_nativePtr, true);
+
+  @override
+  double get gridColumnGap => _yogaNodeGetGridGap(_nativePtr, false);
+
+  @override
+  double get gridRowGap => _yogaNodeGetGridGap(_nativePtr, true);
+
+  @override
+  bool setGridVirtualContributions(List<double> rows, List<double> columns) {
+    if (rows.isEmpty && columns.isEmpty) {
+      return _yogaNodeSetGridVirtualContributions(
+          _nativePtr, nullptr, 0, nullptr, 0);
+    }
+    final sizes = calloc<Float>(rows.length + columns.length);
+    final list = sizes.asTypedList(rows.length + columns.length);
+    list.setAll(0, rows);
+    list.setAll(rows.length, columns);
+    final changed = _yogaNodeSetGridVirtualContributions(
+        _nativePtr, sizes, rows.length, sizes + rows.length, columns.length);
+    calloc.free(sizes);
+    return changed;
+  }
 
   @override
   void clearChildren() => _yogaNodeClearChildren(_nativePtr);

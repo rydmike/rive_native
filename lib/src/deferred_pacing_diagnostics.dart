@@ -2,8 +2,9 @@ import 'package:flutter/foundation.dart';
 
 /// One sampling window of deferred pacing counters. All rates are per
 /// [seconds]; elapsed values are the summed animation time the window ticked
-/// versus actually painted (a persistent gap means time is banking, not
-/// painting).
+/// versus actually painted (with `alwaysDraw`, a persistent gap means time is
+/// banking, not painting; `drawWhenChanged` also leaves unchanged ticks
+/// unpainted).
 typedef RiveDeferredPacingWindow = ({
   double seconds,
   int textures,

@@ -3,13 +3,14 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io' as io;
 import 'dart:typed_data';
-import 'dart:ui' show Color;
+import 'dart:ui' show BlendMode, Color;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:meta/meta.dart';
 import 'package:rive_native/focus.dart' as focus;
 import 'package:rive_native/math.dart';
+import 'package:rive_native/scroll.dart';
 import 'package:rive_native/rive_audio.dart';
 import 'package:rive_native/rive_luau.dart';
 import 'package:rive_native/rive_text.dart';
@@ -29,8 +30,16 @@ import 'package:rive_native/src/ffi/rive_semantic_ffi.dart';
 import 'package:rive_native/src/semantics/semantics_diff.dart';
 import 'package:rive_native/src/ffi/rive_luau_ffi.dart'
     show riveFileSetScriptingVM, LuauStateFFI;
+import 'package:rive_native/src/ffi/rive_wasm_ffi.dart'
+    show
+        riveFileAdoptWasmScriptingVM,
+        riveFileRegisterWasmScript,
+        riveFileWasmScriptingVM,
+        WasmScriptingVMFFI;
 import 'package:rive_native/src/ffi/rive_text_ffi.dart';
+import 'package:rive_native/src/interpolator_callbacks.dart';
 import 'package:rive_native/src/rive.dart';
+import 'package:rive_native/src/scripting_flavor.dart';
 import 'package:rive_native/src/rive_renderer.dart';
 
 final DynamicLibrary nativeLib = DynamicLibraryHelper.open();
@@ -151,8 +160,8 @@ final Pointer<Void> Function(
 // library -- which is what rive_flutter links. Looking them up unconditionally
 // would throw the first time anything touched them.
 final int Function(Pointer<Void>, int, Pointer<Uint8>, int)?
-    _riveFileReplaceArtboard = nativeLib
-            .providesSymbol('riveFileReplaceArtboard')
+    _riveFileReplaceArtboard =
+    nativeLib.providesSymbol('riveFileReplaceArtboard')
         ? nativeLib
             .lookup<
                 NativeFunction<
@@ -203,6 +212,125 @@ final Pointer<Void> Function(Pointer<Void> file, int index, bool frameOrigin)
                 Pointer<Void> Function(
                     Pointer<Void>, Uint32, Bool)>>('riveFileArtboardByIndex')
         .asFunction();
+// Artboard paint sources. Looked up tolerantly, like layer masking: an editor
+// built against an older librive_native paints no artboard instead of
+// failing to load.
+final bool _hasArtboardPaintSource =
+    nativeLib.providesSymbol('artboardPaintSourceMake');
+final Pointer<Void> Function(Pointer<Void> file, int index)
+    _artboardPaintSourceMake = !_hasArtboardPaintSource
+        ? ((Pointer<Void> _, int __) => nullptr)
+        : nativeLib
+            .lookup<
+                NativeFunction<
+                    Pointer<Void> Function(
+                        Pointer<Void>, Uint32)>>('artboardPaintSourceMake')
+            .asFunction();
+final Pointer<NativeFunction<Void Function(Pointer<Void>)>>?
+    _artboardPaintSourceDeleteNative = !_hasArtboardPaintSource
+        ? null
+        : nativeLib.lookup<NativeFunction<Void Function(Pointer<Void>)>>(
+            'artboardPaintSourceDelete');
+final int Function(Pointer<Void>, double, int) _artboardPaintSourceAdvance =
+    !_hasArtboardPaintSource
+        ? ((Pointer<Void> _, double __, int ___) => 0)
+        : nativeLib
+            .lookup<
+                NativeFunction<
+                    Uint8 Function(Pointer<Void>, Float,
+                        Uint32)>>('artboardPaintSourceAdvance')
+            .asFunction();
+// Newer than the rest of the paint source API, so looked up on its own.
+final bool _hasArtboardPaintSourceDataContext =
+    nativeLib.providesSymbol('artboardPaintSourceSetDataContext');
+final void Function(Pointer<Void>, Pointer<Void>)
+    _artboardPaintSourceSetDataContext = !_hasArtboardPaintSourceDataContext
+        ? ((Pointer<Void> _, Pointer<Void> __) {})
+        : nativeLib
+            .lookup<
+                NativeFunction<
+                    Void Function(Pointer<Void>,
+                        Pointer<Void>)>>('artboardPaintSourceSetDataContext')
+            .asFunction();
+final bool Function(Pointer<Void>) _artboardPaintSourceUpdateDataBinds =
+    !_hasArtboardPaintSourceDataContext
+        ? ((Pointer<Void> _) => false)
+        : nativeLib
+            .lookup<NativeFunction<Bool Function(Pointer<Void>)>>(
+                'artboardPaintSourceUpdateDataBinds')
+            .asFunction();
+final void Function(Pointer<Void>, Pointer<Float>) _artboardPaintSourceBounds =
+    !_hasArtboardPaintSource
+        ? ((Pointer<Void> _, Pointer<Float> __) {})
+        : nativeLib
+            .lookup<
+                NativeFunction<
+                    Void Function(Pointer<Void>,
+                        Pointer<Float>)>>('artboardPaintSourceBounds')
+            .asFunction();
+
+class FFIArtboardPaintSource extends ArtboardPaintSource
+    implements RiveFFIReference, Finalizable {
+  static final _finalizer = _artboardPaintSourceDeleteNative == null
+      ? null
+      : NativeFinalizer(_artboardPaintSourceDeleteNative!);
+
+  Pointer<Void> _pointer;
+
+  @override
+  Pointer<Void> get pointer => _pointer;
+
+  FFIArtboardPaintSource(this._pointer) {
+    _finalizer?.attach(this, _pointer.cast(), detach: this);
+  }
+
+  @override
+  int advance(double elapsedSeconds, int flags) => _pointer == nullptr
+      ? 0
+      : _artboardPaintSourceAdvance(_pointer, elapsedSeconds, flags);
+
+  @override
+  void setDataContext(InternalDataContext? dataContext) {
+    if (_pointer == nullptr) {
+      return;
+    }
+    _artboardPaintSourceSetDataContext(
+        _pointer,
+        dataContext is FFIRiveInternalDataContext
+            ? dataContext.pointer
+            : nullptr);
+  }
+
+  @override
+  bool updateDataBinds() =>
+      _pointer != nullptr && _artboardPaintSourceUpdateDataBinds(_pointer);
+
+  @override
+  AABB get bounds {
+    if (_pointer == nullptr) {
+      return AABB();
+    }
+    final out = malloc<Float>(4);
+    try {
+      _artboardPaintSourceBounds(_pointer, out);
+      return AABB.fromValues(out[0], out[1], out[2], out[3]);
+    } finally {
+      malloc.free(out);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_pointer == nullptr) {
+      return;
+    }
+    _finalizer?.detach(this);
+    _artboardPaintSourceDeleteNative!
+        .asFunction<void Function(Pointer<Void>)>()(_pointer);
+    _pointer = nullptr;
+  }
+}
+
 final Pointer<Void> Function(Pointer<Void> file, Pointer<Void> name)
     _riveFileArtboardToBindNamed = nativeLib
         .lookup<
@@ -213,6 +341,15 @@ final Pointer<Void> Function(Pointer<Void> file, Pointer<Void> name)
 final int Function(Pointer<Void>) _riveFileAssetId = nativeLib
     .lookup<NativeFunction<Uint32 Function(Pointer<Void>)>>('riveFileAssetId')
     .asFunction();
+// Null on a native lib built before the wasm frame service, which then has
+// nothing to service.
+final Pointer<Utf8> Function(Pointer<Void>)? _riveFileFrameBoundary =
+    nativeLib.providesSymbol('riveFileFrameBoundary')
+        ? nativeLib
+            .lookup<NativeFunction<Pointer<Utf8> Function(Pointer<Void>)>>(
+                'riveFileFrameBoundary')
+            .asFunction()
+        : null;
 final Pointer<Utf8> Function(Pointer<Void>) _riveFileAssetName = nativeLib
     .lookup<NativeFunction<Pointer<Utf8> Function(Pointer<Void>)>>(
         'riveFileAssetName')
@@ -341,9 +478,63 @@ final void Function(Pointer<Void> artboard, Pointer<Void> renderer)
         .lookup<NativeFunction<Void Function(Pointer<Void>, Pointer<Void>)>>(
             'artboardDrawInternal')
         .asFunction();
-final void Function(Pointer<Void> artboard) _artboardReset = nativeLib
-    .lookup<NativeFunction<Void Function(Pointer<Void>)>>('artboardReset')
-    .asFunction();
+// Newer than some prebuilt libraries; null there, which draws undeformed.
+final bool Function(Pointer<Void>, double, Pointer<Float>)?
+_artboardMeshUVTransform = nativeLib.providesSymbol('artboardMeshUVTransform')
+    ? nativeLib
+          .lookup<
+            NativeFunction<Bool Function(Pointer<Void>, Float, Pointer<Float>)>
+          >('artboardMeshUVTransform')
+          .asFunction()
+    : null;
+final double Function(Pointer<Void>)? _artboardRasterResolution =
+    nativeLib.providesSymbol('artboardRasterResolution')
+    ? nativeLib
+          .lookup<NativeFunction<Float Function(Pointer<Void>)>>(
+            'artboardRasterResolution',
+          )
+          .asFunction()
+    : null;
+final void Function(Pointer<Void>, Pointer<Float>)? _artboardSelfTransform =
+    nativeLib.providesSymbol('artboardSelfTransform')
+    ? nativeLib
+          .lookup<NativeFunction<Void Function(Pointer<Void>, Pointer<Float>)>>(
+            'artboardSelfTransform',
+          )
+          .asFunction()
+    : null;
+final bool Function(
+  Pointer<Void>,
+  Pointer<Void>,
+  double,
+  Pointer<Void>,
+  Pointer<Void>,
+  Pointer<Void>,
+  int,
+  int,
+  int,
+  double,
+)?
+_artboardDrawThroughMesh = nativeLib.providesSymbol('artboardDrawThroughMesh')
+    ? nativeLib
+          .lookup<
+            NativeFunction<
+              Bool Function(
+                Pointer<Void>,
+                Pointer<Void>,
+                Float,
+                Pointer<Void>,
+                Pointer<Void>,
+                Pointer<Void>,
+                Uint32,
+                Uint32,
+                Uint8,
+                Float,
+              )
+            >
+          >('artboardDrawThroughMesh')
+          .asFunction()
+    : null;
 final void Function(Pointer<Void> artboard, Pointer<Void> renderPath, double,
         double, double, double, double, double) _artboardAddToRenderPath =
     nativeLib
@@ -414,6 +605,9 @@ final Pointer<Void> Function(Pointer<Void> artboard, int index)
 final bool Function(Pointer<Void> artboard) _artboardGetFrameOrigin = nativeLib
     .lookup<NativeFunction<Bool Function(Pointer<Void>)>>(
         'artboardGetFrameOrigin')
+    .asFunction();
+final bool Function(Pointer<Void> artboard) _artboardDidChange = nativeLib
+    .lookup<NativeFunction<Bool Function(Pointer<Void>)>>('artboardDidChange')
     .asFunction();
 final bool Function(Pointer<Void> artboard, double seconds, int flags)
     _artboardAdvance = nativeLib
@@ -751,18 +945,91 @@ final int Function(
   double x,
   double y,
   int pointerId,
+  int button,
 ) _stateMachineInstancePointerDown = nativeLib
-    .lookup<NativeFunction<Uint8 Function(Pointer<Void>, Float, Float, Int)>>(
-        'stateMachineInstancePointerDown')
+    .lookup<
+        NativeFunction<
+            Uint8 Function(Pointer<Void>, Float, Float, Int,
+                Int)>>('stateMachineInstancePointerDown')
     .asFunction();
 final int Function(
   Pointer<Void> ami,
   double x,
   double y,
   int pointerId,
+  int button,
 ) _stateMachineInstancePointerUp = nativeLib
+    .lookup<
+        NativeFunction<
+            Uint8 Function(Pointer<Void>, Float, Float, Int,
+                Int)>>('stateMachineInstancePointerUp')
+    .asFunction();
+final int Function(
+  Pointer<Void> ami,
+  double x,
+  double y,
+  double deltaX,
+  double deltaY,
+  int phase,
+  int precise,
+  double timeStamp,
+  int pointerId,
+) _stateMachineInstancePointerScroll = nativeLib
+    .lookup<
+        NativeFunction<
+            Uint8 Function(Pointer<Void>, Float, Float, Float, Float, Uint8,
+                Uint8, Float, Int)>>('stateMachineInstancePointerScroll')
+    .asFunction();
+final int Function(
+  Pointer<Void> ami,
+  double x,
+  double y,
+  double deltaX,
+  double deltaY,
+  int phase,
+  int precise,
+) _stateMachineInstanceWantsScroll = nativeLib
+    .lookup<
+        NativeFunction<
+            Uint8 Function(Pointer<Void>, Float, Float, Float, Float, Uint8,
+                Uint8)>>('stateMachineInstanceWantsScroll')
+    .asFunction();
+final int Function(
+  Pointer<Void> ami,
+  double x,
+  double y,
+) _stateMachineInstanceHasScrollTargetAt = nativeLib
+    .lookup<NativeFunction<Uint8 Function(Pointer<Void>, Float, Float)>>(
+        'stateMachineInstanceHasScrollTargetAt')
+    .asFunction();
+final int Function(
+  Pointer<Void> ami,
+  double x,
+  double y,
+  int button,
+) _stateMachineInstanceListensToButtonAt = nativeLib
     .lookup<NativeFunction<Uint8 Function(Pointer<Void>, Float, Float, Int)>>(
-        'stateMachineInstancePointerUp')
+        'stateMachineInstanceListensToButtonAt')
+    .asFunction();
+final int Function(
+  Pointer<Void> ami,
+  double x,
+  double y,
+) _stateMachineInstanceScrollOccludedAt = nativeLib
+    .lookup<NativeFunction<Uint8 Function(Pointer<Void>, Float, Float)>>(
+        'stateMachineInstanceScrollOccludedAt')
+    .asFunction();
+final int Function(
+  Pointer<Void> ami,
+) _stateMachineInstanceHasScrollLatch = nativeLib
+    .lookup<NativeFunction<Uint8 Function(Pointer<Void>)>>(
+        'stateMachineInstanceHasScrollLatch')
+    .asFunction();
+final void Function(
+  Pointer<Void> ami,
+) _stateMachineInstanceCancelScroll = nativeLib
+    .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
+        'stateMachineInstanceCancelScroll')
     .asFunction();
 final int Function(
   Pointer<Void> ami,
@@ -790,18 +1057,24 @@ final int Function(
   double x,
   double y,
   double timeStamp,
+  int button,
 ) _stateMachineInstanceDragStart = nativeLib
-    .lookup<NativeFunction<Uint8 Function(Pointer<Void>, Float, Float, Float)>>(
-        'stateMachineInstanceDragStart')
+    .lookup<
+        NativeFunction<
+            Uint8 Function(Pointer<Void>, Float, Float, Float,
+                Int)>>('stateMachineInstanceDragStart')
     .asFunction();
 final int Function(
-    Pointer<Void> ami,
-    double x,
-    double y,
-    double
-        timeStamp) _stateMachineInstanceDragEnd = nativeLib
-    .lookup<NativeFunction<Uint8 Function(Pointer<Void>, Float, Float, Float)>>(
-        'stateMachineInstanceDragEnd')
+  Pointer<Void> ami,
+  double x,
+  double y,
+  double timeStamp,
+  int button,
+) _stateMachineInstanceDragEnd = nativeLib
+    .lookup<
+        NativeFunction<
+            Uint8 Function(Pointer<Void>, Float, Float, Float,
+                Int)>>('stateMachineInstanceDragEnd')
     .asFunction();
 final bool Function(
   Pointer<Void> ami,
@@ -1157,6 +1430,11 @@ final Pointer<Void> Function(Pointer<Void> artboard, bool)
         .lookup<NativeFunction<Pointer<Void> Function(Pointer<Void>, Bool)>>(
             'artboardParentIsStack')
         .asFunction();
+final void Function(Pointer<Void> artboard, int column, int row)
+    _artboardVirtualGridCell = nativeLib
+        .lookup<NativeFunction<Void Function(Pointer<Void>, Int32, Int32)>>(
+            'artboardVirtualGridCell')
+        .asFunction();
 final Pointer<Void> Function(Pointer<Void> artboard, bool)
     _artboardWidthIntrinsicallySizeOverride = nativeLib
         .lookup<NativeFunction<Pointer<Void> Function(Pointer<Void>, Bool)>>(
@@ -1173,16 +1451,16 @@ final Pointer<Void> Function(Pointer<Void> artboard, bool) _updateLayoutBounds =
             'updateLayoutBounds')
         .asFunction();
 final void Function(Pointer<Void> artboard, int, int, double, int, double,
-        double, double, double) _cascadeLayoutStyle =
+        double, double, double, int) _cascadeLayoutStyle =
     nativeLib
         .lookup<
             NativeFunction<
                 Void Function(Pointer<Void>, Int32, Int32, Float, Int32, Float,
-                    Float, Float, Float)>>('cascadeLayoutStyle')
+                    Float, Float, Float, Uint32)>>('cascadeLayoutStyle')
         .asFunction();
 final void Function(Pointer<Pointer<Void>> artboards, int count, int, int,
-        double, int, double, double, double, double) _cascadeLayoutStyleBatch =
-    nativeLib
+        double, int, double, double, double, double, int)
+    _cascadeLayoutStyleBatch = nativeLib
         .lookup<
             NativeFunction<
                 Void Function(
@@ -1195,7 +1473,15 @@ final void Function(Pointer<Pointer<Void>> artboards, int count, int, int,
                     Float,
                     Float,
                     Float,
-                    Float)>>('cascadeLayoutStyleBatch')
+                    Float,
+                    Uint32)>>('cascadeLayoutStyleBatch')
+        .asFunction();
+typedef _InterpolatorTransformCallback
+    = Pointer<NativeFunction<Float Function(Uint32, Float)>>;
+final void Function(_InterpolatorTransformCallback) _initInterpolatorCallbacks =
+    nativeLib
+        .lookup<NativeFunction<Void Function(_InterpolatorTransformCallback)>>(
+            'initInterpolatorCallbacks')
         .asFunction();
 final void Function(
     Pointer<Pointer<Void>> artboards,
@@ -1346,10 +1632,6 @@ final int Function(Pointer<Void>) _viewModelInstanceListSize = nativeLib
     .lookup<NativeFunction<Size Function(Pointer<Void>)>>(
         'viewModelInstanceListSize')
     .asFunction();
-final void Function(Pointer<Void>) _setViewModelInstanceAdvanced = nativeLib
-    .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
-        'setViewModelInstanceAdvanced')
-    .asFunction();
 final Pointer<Void> Function(Pointer<Void>) _setViewModelInstanceEnumCallback =
     nativeLib
         .lookup<NativeFunction<Pointer<Void> Function(Pointer<Void>)>>(
@@ -1390,10 +1672,10 @@ final void Function(Pointer<Void>, Pointer<Void>)
         .lookup<NativeFunction<Void Function(Pointer<Void>, Pointer<Void>)>>(
             'setViewModelInstanceStringValue')
         .asFunction();
-final void Function(Pointer<Void>, int) _setViewModelInstanceTriggerValue =
+final void Function(Pointer<Void>, int) _fireViewModelInstanceTrigger =
     nativeLib
         .lookup<NativeFunction<Void Function(Pointer<Void>, Uint32)>>(
-            'setViewModelInstanceTriggerValue')
+            'fireViewModelInstanceTrigger')
         .asFunction();
 final void Function(Pointer<Void>, int) _setViewModelInstanceEnumValue =
     nativeLib
@@ -1581,12 +1863,13 @@ abstract class _NativeFile {
       .lookup<NativeFunction<Uint64 Function(Pointer<Void>)>>(
           'riveFileArtboardCount')
       .asFunction();
-  static final Pointer<Utf8> Function(Pointer<Void> file, int index)
-      artboardName = nativeLib
-          .lookup<
-              NativeFunction<Pointer<Utf8> Function(Pointer<Void>, Uint64)>>(
-              'riveFileArtboardName')
-          .asFunction();
+  static final Pointer<Utf8> Function(
+      Pointer<Void> file,
+      int
+          index) artboardName = nativeLib
+      .lookup<NativeFunction<Pointer<Utf8> Function(Pointer<Void>, Uint64)>>(
+          'riveFileArtboardName')
+      .asFunction();
 }
 
 abstract class _NativeArtboard {
@@ -2214,8 +2497,16 @@ class FFIRiveFile extends File implements RiveFFIReference, Finalizable {
     }
   }
 
+  // Runs synchronously inside the native advance Dart itself called, so it
+  // is always on this isolate's thread.
+  static double _interpolatorTransformCallback(int handle, double factor) =>
+      InterpolatorCallbacks.transform(handle, factor);
+
   FFIRiveFile(this._pointer, this.riveFactory) {
     _finalizer.attach(this, _pointer.cast(), detach: this);
+    _initInterpolatorCallbacks(
+        Pointer.fromFunction<Float Function(Uint32, Float)>(
+            _interpolatorTransformCallback, 0.0));
     _initBindingCallbacks(
       Pointer.fromFunction(_vmNumberCallback),
       Pointer.fromFunction(_vmBooleanCallback),
@@ -2292,6 +2583,12 @@ class FFIRiveFile extends File implements RiveFFIReference, Finalizable {
   @override
   Artboard? artboardAt(int index, {bool frameOrigin = true}) =>
       _artboard(_riveFileArtboardByIndex(pointer, index, frameOrigin));
+
+  @override
+  ArtboardPaintSource? artboardPaintSource(int index) {
+    final ptr = _artboardPaintSourceMake(pointer, index);
+    return ptr == nullptr ? null : FFIArtboardPaintSource(ptr);
+  }
 
   @override
   BindableArtboard? artboardToBind(
@@ -2443,6 +2740,28 @@ class FFIRiveFile extends File implements RiveFFIReference, Finalizable {
   }
 
   @override
+  void adoptWasmScriptingVM(covariant WasmScriptingVMFFI vm) {
+    riveFileAdoptWasmScriptingVM(pointer, vm.pointer);
+    vm.markAdopted();
+  }
+
+  @override
+  bool get hasWasmScriptingVM =>
+      riveScriptingWasm && riveFileWasmScriptingVM(pointer) != nullptr;
+
+  @override
+  bool registerWasmScript(String moduleName, String registryName) {
+    final module = moduleName.toNativeUtf8(allocator: calloc);
+    final registry = registryName.toNativeUtf8(allocator: calloc);
+    try {
+      return riveFileRegisterWasmScript(pointer, module, registry);
+    } finally {
+      calloc.free(module);
+      calloc.free(registry);
+    }
+  }
+
+  @override
   int get viewModelCount => _NativeFile.viewModelCount(pointer);
 
   @override
@@ -2473,6 +2792,17 @@ class FFIRiveFile extends File implements RiveFFIReference, Finalizable {
       return null;
     }
     return FFIRiveViewModelRuntime(ptr);
+  }
+
+  @override
+  String? frameBoundary() {
+    final service = _riveFileFrameBoundary;
+    if (service == null) {
+      return null;
+    }
+    // Owned by the file and valid until the next call, so copy it out now.
+    final warning = service(pointer);
+    return warning == nullptr ? null : warning.toDartString();
   }
 
   @override
@@ -3256,9 +3586,10 @@ class FFIStateMachine extends StateMachine
       _stateMachineInstanceHitTest(pointer, position.x, position.y);
 
   @override
-  HitResult pointerDown(Vec2D position, {int pointerId = 0}) {
+  HitResult pointerDown(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary}) {
     var result = _stateMachineInstancePointerDown(
-        pointer, position.x, position.y, pointerId);
+        pointer, position.x, position.y, pointerId, button.index);
     return HitResult.values[result];
   }
 
@@ -3278,23 +3609,76 @@ class FFIStateMachine extends StateMachine
   }
 
   @override
-  HitResult pointerUp(Vec2D position, {int pointerId = 0}) {
+  HitResult pointerScroll(Vec2D position, ScrollEvent event,
+      {double? timeStamp, int pointerId = 0}) {
+    var result = _stateMachineInstancePointerScroll(
+        pointer,
+        position.x,
+        position.y,
+        event.delta.x,
+        event.delta.y,
+        event.phase.index,
+        event.precise ? 1 : 0,
+        timeStamp ?? 0,
+        pointerId);
+    return HitResult.values[result];
+  }
+
+  @override
+  bool wantsScroll(Vec2D position, ScrollEvent event) =>
+      _stateMachineInstanceWantsScroll(
+          pointer,
+          position.x,
+          position.y,
+          event.delta.x,
+          event.delta.y,
+          event.phase.index,
+          event.precise ? 1 : 0) !=
+      0;
+
+  @override
+  bool hasScrollTargetAt(Vec2D position) =>
+      _stateMachineInstanceHasScrollTargetAt(pointer, position.x, position.y) !=
+      0;
+
+  @override
+  bool listensToButtonAt(Vec2D position, PointerButton button) =>
+      _stateMachineInstanceListensToButtonAt(
+          pointer, position.x, position.y, button.index) !=
+      0;
+
+  @override
+  bool scrollOccludedAt(Vec2D position) =>
+      _stateMachineInstanceScrollOccludedAt(pointer, position.x, position.y) !=
+      0;
+
+  @override
+  bool get hasScrollLatch => _stateMachineInstanceHasScrollLatch(pointer) != 0;
+
+  @override
+  void cancelScroll() => _stateMachineInstanceCancelScroll(pointer);
+
+  @override
+  HitResult pointerUp(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary}) {
     var result = _stateMachineInstancePointerUp(
-        pointer, position.x, position.y, pointerId);
+        pointer, position.x, position.y, pointerId, button.index);
     return HitResult.values[result];
   }
 
   @override
-  HitResult dragStart(Vec2D position, {double? timeStamp}) {
+  HitResult dragStart(Vec2D position,
+      {double? timeStamp, PointerButton button = PointerButton.primary}) {
     var result = _stateMachineInstanceDragStart(
-        pointer, position.x, position.y, timeStamp ?? 0);
+        pointer, position.x, position.y, timeStamp ?? 0, button.index);
     return HitResult.values[result];
   }
 
   @override
-  HitResult dragEnd(Vec2D position, {double? timeStamp}) {
+  HitResult dragEnd(Vec2D position,
+      {double? timeStamp, PointerButton button = PointerButton.primary}) {
     var result = _stateMachineInstanceDragEnd(
-        pointer, position.x, position.y, timeStamp ?? 0);
+        pointer, position.x, position.y, timeStamp ?? 0, button.index);
     return HitResult.values[result];
   }
 
@@ -3802,14 +4186,82 @@ class FFIRiveArtboard extends Artboard
   }
 
   @override
+  bool drawThroughMesh(
+    Renderer renderer,
+    double resolution,
+    covariant FFIVertexRenderBuffer vertices,
+    covariant FFIVertexRenderBuffer uvs,
+    covariant FFIIndexRenderBuffer indices,
+    BlendMode blendMode,
+    double opacity,
+  ) {
+    final draw = _artboardDrawThroughMesh;
+    if (draw == null) {
+      return false;
+    }
+    assert(riveFactory.isValidRenderer(renderer));
+    vertices.update();
+    uvs.update();
+    indices.update();
+    return draw(
+      pointer,
+      (renderer as RiveFFIReference).pointer,
+      resolution,
+      vertices.pointer,
+      uvs.pointer,
+      indices.pointer,
+      vertices.elementCount,
+      indices.elementCount,
+      blendMode.index,
+      opacity,
+    );
+  }
+
+  @override
+  double? get rasterResolution => _artboardRasterResolution?.call(pointer);
+
+  @override
+  Mat2D? get selfTransform {
+    final read = _artboardSelfTransform;
+    if (read == null) {
+      return null;
+    }
+    read(pointer, _floatQueryBuffer);
+    final m = Mat2D();
+    for (int i = 0; i < 6; i++) {
+      m[i] = _floatQueryBuffer[i];
+    }
+    return m;
+  }
+
+  @override
+  Mat2D? meshUVTransform(double resolution) {
+    final uvTransform = _artboardMeshUVTransform;
+    if (uvTransform == null) {
+      return null;
+    }
+    final out = calloc<Float>(6);
+    try {
+      if (!uvTransform(pointer, resolution, out)) {
+        return null;
+      }
+      final m = Mat2D();
+      for (int i = 0; i < 6; i++) {
+        m[i] = out[i];
+      }
+      return m;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  @override
   void advanceFrameId() {
     _NativeFile.riveAdvanceFrameId();
   }
 
   @override
-  void reset() {
-    _artboardReset(pointer);
-  }
+  void reset() {}
 
   @override
   StateMachine? defaultStateMachine() {
@@ -3933,6 +4385,9 @@ class FFIRiveArtboard extends Artboard
 
   @override
   bool get frameOrigin => _artboardGetFrameOrigin(pointer);
+
+  @override
+  bool get didChange => _artboardDidChange(pointer);
 
   @override
   set frameOrigin(bool value) => _artboardSetFrameOrigin(pointer, value);
@@ -4188,6 +4643,10 @@ class FFIRiveArtboard extends Artboard
   void parentIsStack(bool isStack) => _artboardParentIsStack(pointer, isStack);
 
   @override
+  void virtualGridCell(int column, int row) =>
+      _artboardVirtualGridCell(pointer, column, row);
+
+  @override
   void widthIntrinsicallySizeOverride(bool intrinsic) =>
       _artboardWidthIntrinsicallySizeOverride(pointer, intrinsic);
 
@@ -4208,9 +4667,10 @@ class FFIRiveArtboard extends Artboard
           double p0,
           double p1,
           double p2,
-          double p3) =>
+          double p3,
+          int scriptHandle) =>
       _cascadeLayoutStyle(pointer, direction, interpolationType,
-          interpolationTime, interpolatorTypeKey, p0, p1, p2, p3);
+          interpolationTime, interpolatorTypeKey, p0, p1, p2, p3, scriptHandle);
 
   @override
   void cascadeLayoutStyleBatch(
@@ -4222,14 +4682,15 @@ class FFIRiveArtboard extends Artboard
       double p0,
       double p1,
       double p2,
-      double p3) {
+      double p3,
+      int scriptHandle) {
     final count = artboards.length;
     _artboardBatchScratchBuffer.use(count, (ptr) {
       for (var i = 0; i < count; i++) {
         ptr[i] = (artboards[i] as FFIRiveArtboard).pointer;
       }
       _cascadeLayoutStyleBatch(ptr, count, direction, interpolationType,
-          interpolationTime, interpolatorTypeKey, p0, p1, p2, p3);
+          interpolationTime, interpolatorTypeKey, p0, p1, p2, p3, scriptHandle);
     });
   }
 
@@ -4408,11 +4869,6 @@ class FFIInternalViewModelInstanceValue<T>
     FFIRiveFile.internalUnregisterViewModelInstance(instancePointerAddress);
     _deleteViewModelInstanceValue(_pointer);
     _pointer = nullptr;
-  }
-
-  @override
-  advanced() {
-    _setViewModelInstanceAdvanced(pointer);
   }
 
   @override
@@ -4685,8 +5141,13 @@ class FFIInternalViewModelInstanceTrigger
   }
 
   @override
-  void applyValue(int val) {
-    _setViewModelInstanceTriggerValue(pointer, val);
+  void fire(int fires) {
+    if (suppressCallback) {
+      return;
+    }
+    suppressCallback = true;
+    _fireViewModelInstanceTrigger(pointer, fires);
+    suppressCallback = false;
   }
 }
 
@@ -5129,6 +5590,7 @@ Future<File?> decodeRiveFile(
     );
   }
 
+  riveFactory.startedDecodingFile();
   // Pass the pointer in to a native method.
   var result = _loadRiveFile(
     pointer,

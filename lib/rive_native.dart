@@ -10,10 +10,12 @@ import 'package:rive_native/rive_native.dart';
 import 'src/rive_native_ffi.dart'
     if (dart.library.js_interop) 'src/rive_native_web.dart';
 
+export 'src/draw_optimization.dart';
 export 'src/render_resolution.dart';
 export 'src/rive.dart' hide RiveProfiler;
 export 'src/rive_renderer.dart';
 export 'package:rive_native/math.dart';
+export 'package:rive_native/scroll.dart';
 export 'src/rive_artboard_layout.dart';
 export 'src/rive_ticker_aware_painter.dart';
 export 'src/rive_widget.dart';
@@ -21,6 +23,7 @@ export 'src/rive_focus_widget.dart';
 export 'src/rive_hit_test.dart';
 export 'src/rive_semantics.dart';
 export 'src/defaults.dart';
+export 'src/scripting_flavor.dart';
 export 'rive_audio.dart' show AudioSource;
 export 'rive_text.dart' show Font;
 
@@ -116,8 +119,19 @@ abstract base class RenderTexturePainter extends RivePainter {
   /// content only; sessionless web textures render through the immediate
   /// fallback) - or with null when the session is managed manually.
   Factory? get riveFactory => Factory.rive;
-  bool paint(RenderTexture texture, double devicePixelRatio, Size size,
-      double elapsedSeconds);
+
+  /// Advances the content by [elapsedSeconds] and returns whether it wants
+  /// another frame. The render object calls this once per frame, before it
+  /// decides whether to [paint].
+  bool advance(double elapsedSeconds);
+
+  /// Whether the last [advance] changed what [paint] draws. While false, the
+  /// render object may skip the draw and keep showing the last frame.
+  bool get needsPaint => true;
+
+  /// Draws the current state into [texture]. Does not advance.
+  void paint(RenderTexture texture, double devicePixelRatio, Size size);
+
   bool get paintsCanvas => false;
   bool get needsClip => false;
   void paintCanvas(Canvas canvas, Offset offset, Size size) {}
@@ -291,10 +305,26 @@ abstract class RiveNative {
   static bool _isInitialized = false;
   static bool get isInitialized => _isInitialized;
 
-  static Future<bool> init() async {
+  /// Whether the app asked for Android textures to be handed to Flutter as
+  /// hardware buffers, as decided by the first [init] call. It is the
+  /// request, not the outcome: a device below API 29 or one whose GL
+  /// context cannot import hardware buffers takes the Surface path with this
+  /// still true, and it is meaningless off Android.
+  static bool get androidHardwareBuffers => _androidHardwareBuffers;
+  static bool _androidHardwareBuffers = false;
+
+  /// [androidHardwareBuffers] opts Android in to rendering each texture
+  /// straight into hardware buffers that Flutter samples directly, instead
+  /// of through a Surface. Available on API 29 and up; devices that cannot
+  /// take the path keep the Surface one. Off by default: opt in per app,
+  /// and opt out again by not setting it, with no other code change. The
+  /// first call decides; the runtime calls [init] again internally without
+  /// arguments, and those calls do not change it.
+  static Future<bool> init({bool androidHardwareBuffers = false}) async {
     if (_initializeCompleter != null) {
       return _initializeCompleter!.future;
     }
+    _androidHardwareBuffers = androidHardwareBuffers;
     _initializeCompleter = Completer<bool>();
     final riveNative = await makeRiveNative();
     if (riveNative != null) {
@@ -328,6 +358,9 @@ abstract class RiveNative {
   /// when no Rive content is on screen; resources are recreated on demand.
   /// May be a no-op on platforms that cache nothing.
   void releaseRenderResources() {}
+
+  /// Display pixel ratio for meshed Component rasters. Process-wide.
+  void setRasterDisplayScale(double scale) {}
 
   /// When true, logs render-texture lifecycle events — create, pool reuse,
   /// release and why — to the console, with live WebGL context counts.

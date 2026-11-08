@@ -1,3 +1,32 @@
+## 0.2.0-dev.4
+
+- Updates the Rive C++ runtime and renderer for the latest features, bug fixes, and performance improvements.
+
+### Changes
+
+- Rive widgets redraw only when the artboard changed. Pass `drawOptimization: DrawOptimization.alwaysDraw` to `RiveArtboardWidget`, `RiveFileWidget` or `RiveProceduralRenderingWidget` to redraw every advanced frame. A custom painter that draws more than its artboard calls `notifyListeners()` when that content changes, or uses `alwaysDraw`.
+- Breaking: `RenderTexturePainter` separates advancing from drawing. Implement `bool advance(double elapsedSeconds)`, which returns whether to keep advancing, and `void paint(RenderTexture texture, double devicePixelRatio, Size size)`, which only draws. Override `needsPaint` to let the render object skip frames that changed nothing.
+- Adds `Artboard.didChange`, true when the artboard changed since it was last drawn.
+- A focused text input now blurs when a primary press lands outside it, as a platform text field does.
+- Adds `PointerButton` and a `button` argument to `StateMachine.pointerDown`, `pointerUp`, `dragStart` and `dragEnd`, so listeners can match secondary and middle mouse buttons. `button` defaults to `PointerButton.primary`. `StateMachine.listensToButtonAt` reports whether a listener under a position responds to a button.
+
+### Performance
+
+- Android: opt in with `RiveNative.init(androidHardwareBuffers: true)` and, on API 29 and up, Rive draws straight into hardware buffers that Flutter samples as-is, with no surface swap or blit per frame. On a Pixel 8a showing 8 to 16 widgets this frees about one CPU core and 20 to 40 MB of graphics memory; a widget whose scale animates, which recreates its texture every frame, drops fewer frames. Off by default; devices that cannot take the path, and everything below API 29, keep the surface path.
+
+### Fixes
+
+- A view model trigger fired by a nested state machine now reaches sibling state machines bound to the same view model. It used to be cleared before they checked their transitions.
+- Windows: the app no longer hangs or crashes on exit while releasing the GPU device.
+- `RenderPath.addPath` with a disposed path no longer crashes. It adds nothing.
+- Android, OpenGL: Rive content that a script draws into a GPU canvas now renders. It came out empty, so a blur of it drew nothing, or a black band on Mali GPUs.
+- Android: the Rive Renderer releases the memory it allocated for drawing once the last Rive widget is gone.
+- Disposing a Rive widget no longer leaves its render target registered in the renderer. Over many widget lifetimes that let frames run further ahead of rendering.
+- Web: with Chrome's draft WebGL extensions enabled, content no longer stops rendering after the first frame with `GL_INVALID_OPERATION: glBlitFramebuffer: Blit feedback loop`. See [#635](https://github.com/rive-app/rive-flutter/issues/635).
+- `ArtboardWidgetRiveRenderer` disposes the internal `ArtboardWidgetPainter` wrapping `painter` when `painter` changes. Each change used to leave one wrapper undisposed, which `leak_tracker` reported as `notDisposed`. The `painter` you pass in is never disposed by the widget. See [#636](https://github.com/rive-app/rive-flutter/issues/636).
+- `Factory.flutter`: `File.decode()` no longer waits for images from unrelated `Factory.decodeImage()` calls. If one of those never completed, for example an image decode started in a widget test that has since ended, every later file decode hung. See [#658](https://github.com/rive-app/rive-flutter/issues/658).
+- iOS/macOS: Swift Package Manager no longer rejects the `rive_native` manifest with `value of type 'String' has no member 'replacingOccurrences'`, which stopped package resolution for the whole app. See [#634](https://github.com/rive-app/rive-flutter/issues/634).
+
 ## 0.2.0-dev.3
 
 - Updates the Rive C++ runtime and renderer for the latest features, bug fixes, and performance improvements.

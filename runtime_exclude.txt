@@ -1,6 +1,5 @@
 .github
 .vscode
-cg_renderer
 dev
 rivinfo
 skia

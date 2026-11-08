@@ -525,12 +525,31 @@ final Pointer<Void> Function(Pointer<Void> state, int)
         )
         .asFunction();
 
-final Pointer<Void> Function(Pointer<Void> state, int id, double x, double y)
-    _riveLuaPushPointerEvent = _nativeLib
+final Pointer<Void> Function(Pointer<Void> state, int id, double x, double y,
+        int hitType, double timeStamp) _riveLuaPushPointerEvent =
+    _nativeLib
         .lookup<
             NativeFunction<
-                Pointer<Void> Function(Pointer<Void>, Uint8, Float,
-                    Float)>>('riveLuaPushPointerEvent')
+                Pointer<Void> Function(Pointer<Void>, Uint8, Float, Float,
+                    Int32, Float)>>('riveLuaPushPointerEvent')
+        .asFunction();
+
+final Pointer<Void> Function(Pointer<Void> state, int id, double x, double y,
+        double dx, double dy, int phase, bool precise, double timeStamp)
+    _riveLuaPushScrollEvent = _nativeLib
+        .lookup<
+            NativeFunction<
+                Pointer<Void> Function(Pointer<Void>, Int32, Float, Float,
+                    Float, Float, Int32, Bool, Float)>>(
+          'riveLuaPushScrollEvent',
+        )
+        .asFunction();
+
+final int Function(Pointer<Void> event) _riveLuaScrollEventHitResult =
+    _nativeLib
+        .lookup<NativeFunction<Uint8 Function(Pointer<Void>)>>(
+          'riveLuaScrollEventHitResult',
+        )
         .asFunction();
 
 final Pointer<Void> Function(Pointer<Void> state, int id, double x, double y,
@@ -774,6 +793,12 @@ final int Function(Pointer<Void> state) _riveLuaGetExecutionTimeout = _nativeLib
     )
     .asFunction();
 
+final bool Function(Pointer<Void> state) _riveLuaBudgetExceeded = _nativeLib
+    .lookup<NativeFunction<Bool Function(Pointer<Void>)>>(
+      'riveLuaBudgetExceeded',
+    )
+    .asFunction();
+
 final void Function(Pointer<Void> state, int assetId, int ref)
     _riveLuaSetGeneratorRef = _nativeLib
         .lookup<NativeFunction<Void Function(Pointer<Void>, Uint32, Int32)>>(
@@ -863,15 +888,6 @@ final int Function(Pointer<Void> state, Pointer<Void> audioSource)
                 )>>('riveLuaPushAudioSource')
         .asFunction();
 
-
-final void Function(Pointer<Void> state) _riveLuaAdvanceDetachedViewModels =
-    _nativeLib
-        .lookup<
-            NativeFunction<
-                Void Function(
-                  Pointer<Void>,
-                )>>('riveLuaAdvanceDetachedViewModels')
-        .asFunction();
 
 // Compiles a shader from the in-memory RSTB registry and pushes it as a
 // ScriptedShader userdata. Returns 1 on success, 0 if not found.
@@ -1433,8 +1449,27 @@ class LuauStateFFI extends LuauState
       );
 
   @override
-  PointerEvent pushPointerEvent(int id, Vec2D position) => FFIPointerEvent(
-        _riveLuaPushPointerEvent(_statePtr, id, position.x, position.y),
+  PointerEvent pushPointerEvent(int id, Vec2D position,
+          {int hitType = -1, double timeStamp = 0}) =>
+      FFIPointerEvent(
+        _riveLuaPushPointerEvent(
+            _statePtr, id, position.x, position.y, hitType, timeStamp),
+      );
+
+  @override
+  ScriptScrollEvent pushScrollEvent(int id, Vec2D position, ScrollEvent event,
+          {double timeStamp = 0}) =>
+      FFIScriptScrollEvent(
+        _riveLuaPushScrollEvent(
+            _statePtr,
+            id,
+            position.x,
+            position.y,
+            event.delta.x,
+            event.delta.y,
+            event.phase.index,
+            event.precise,
+            timeStamp),
       );
 
   @override
@@ -1691,6 +1726,10 @@ class LuauStateFFI extends LuauState
       _statePtr,
       (scriptedPath as FFIScriptedPath).pointer,
     );
+    // pathAt() yields nullptr for anything that isn't a Path/PathData.
+    if (renderPathPointer == nullptr) {
+      return null;
+    }
     final ffRenderPath = rive_renderer.FFIRenderPath.fromPointer(
       riveFactory,
       renderPathPointer,
@@ -1712,6 +1751,9 @@ class LuauStateFFI extends LuauState
 
   @override
   int getExecutionTimeout() => _riveLuaGetExecutionTimeout(_statePtr);
+
+  @override
+  bool get budgetExceeded => _riveLuaBudgetExceeded(_statePtr);
 
   @override
   void setGeneratorRef(int assetId, int ref) =>
@@ -1739,11 +1781,6 @@ class LuauStateFFI extends LuauState
         _statePtr, (audioSource as AudioSourceFFI).nativePtr);
   }
 
-
-  @override
-  void advanceDetachedViewModels() {
-    _riveLuaAdvanceDetachedViewModels(_statePtr);
-  }
 
   @override
   int pushShader(String name) {
@@ -1818,6 +1855,15 @@ class FFIPointerEvent extends PointerEvent {
   @override
   HitResult get hitResult =>
       HitResult.values[_riveLuaPointerEventHitResult(pointer)];
+}
+
+class FFIScriptScrollEvent extends ScriptScrollEvent {
+  final Pointer<Void> pointer;
+  FFIScriptScrollEvent(this.pointer);
+
+  @override
+  HitResult get hitResult =>
+      HitResult.values[_riveLuaScrollEventHitResult(pointer)];
 }
 
 class FFIScriptedDataValue extends ScriptedDataValue {

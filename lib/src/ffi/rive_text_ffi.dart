@@ -610,6 +610,22 @@ final double Function(int value) _convertIntToNumber = _nativeLib
     .lookup<NativeFunction<Float Function(Uint64)>>('convertIntToNumber')
     .asFunction();
 
+typedef _FormatTemplateNumberNative = Pointer<Utf8> Function(
+    Float value, Pointer<Utf8> spec);
+typedef _FormatTemplateNumber = Pointer<Utf8> Function(
+    double value, Pointer<Utf8> spec);
+
+// Looked up lazily so an older native library without it still loads.
+final _FormatTemplateNumber? _formatTemplateNumber =
+    _nativeLib.providesSymbol('formatTemplateNumber')
+        ? _nativeLib.lookupFunction<_FormatTemplateNumberNative,
+            _FormatTemplateNumber>('formatTemplateNumber')
+        : null;
+
+final void Function(Pointer<Utf8> string) _freeString = _nativeLib
+    .lookup<NativeFunction<Void Function(Pointer<Utf8>)>>('freeString')
+    .asFunction();
+
 class RawPathCommandWasm extends RawPathCommand {
   final Pointer<PathPoint> _points;
 
@@ -1181,6 +1197,23 @@ class TextHelperFFI extends TextHelper {
   double convertIntToNumber(int value) {
     var num = _convertIntToNumber(value);
     return num;
+  }
+
+  @override
+  String? formatTemplateNumber(double value, String spec) {
+    final format = _formatTemplateNumber;
+    if (format == null) {
+      return null;
+    }
+    final nativeSpec = spec.toNativeUtf8();
+    final result = format(value, nativeSpec);
+    malloc.free(nativeSpec);
+    if (result == nullptr) {
+      return null;
+    }
+    final text = result.toDartString();
+    _freeString(result);
+    return text;
   }
 }
 

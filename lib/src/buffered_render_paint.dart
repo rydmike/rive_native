@@ -118,6 +118,20 @@ abstract class BufferedRenderPaint extends RenderPaint {
     _dirty |= PaintDirt.cap;
   }
 
+  StrokePosition _strokePosition = StrokePosition.center;
+
+  @override
+  StrokePosition get strokePosition => _strokePosition;
+
+  @override
+  set strokePosition(StrokePosition value) {
+    if (_strokePosition == value) {
+      return;
+    }
+    _strokePosition = value;
+    _dirty |= PaintDirt.strokePosition;
+  }
+
   RenderGradient? _gradient;
 
   @override
@@ -132,12 +146,22 @@ abstract class BufferedRenderPaint extends RenderPaint {
     _dirty |= PaintDirt.gradient;
   }
 
+  Mat2D _gradientTransform = Mat2D();
+
+  @override
+  Mat2D get gradientTransform => _gradientTransform;
+
+  @override
+  set gradientTransform(Mat2D value) {
+    if (Mat2D.areEqual(_gradientTransform, value)) {
+      return;
+    }
+    _gradientTransform = Mat2D.clone(value);
+    _dirty |= PaintDirt.gradientTransform;
+  }
+
   ByteData get scratchBufferByteData;
   void updatePaint(int dirty, int wroteStops);
-
-  /// Flags whose value is serialized after the gradient block, so they cannot
-  /// ride along with an intermediate gradient chunk.
-  static const int _trailingDirt = PaintDirt.feather | PaintDirt.additiveness;
 
   void update() {
     if (_dirty == 0) {
@@ -169,29 +193,41 @@ abstract class BufferedRenderPaint extends RenderPaint {
     if ((_dirty & PaintDirt.blendMode) != 0) {
       view.setUint8(offset++, _blendMode.index);
     }
+    if ((_dirty & PaintDirt.strokePosition) != 0) {
+      view.setUint8(offset++, _strokePosition.index);
+    }
 
-    // Fields written after the gradient terminator. The stop loop has to
-    // leave room for these on top of the 16 byte terminator, or a gradient
-    // that exactly fills the buffer pushes them off the end.
-    var trailingBytes = 0;
+    if ((_dirty & PaintDirt.gradientTransform) != 0) {
+      for (int i = 0; i < 6; i++) {
+        view.setFloat32(offset, _gradientTransform[i], Endian.little);
+        offset += 4;
+      }
+    }
     if ((_dirty & PaintDirt.feather) != 0) {
-      trailingBytes += 4;
+      view.setFloat32(offset, _feather, Endian.little);
+      offset += 4;
     }
     if ((_dirty & PaintDirt.additiveness) != 0) {
-      trailingBytes += 4;
+      view.setFloat32(offset, _additiveness, Endian.little);
+      offset += 4;
     }
 
+    // We write gradient stops last because they are the only thing which may
+    // run out of buffer space and require flushing.
     int wroteStops = 0;
     if (_gradient != null) {
       var gradient = _gradient!;
       var isRadial = gradient is RenderRadialGradient;
+      var isAngular = gradient is RenderAngularGradient;
       int writeStopIndex = 0;
       while (true) {
         if (isRadial) {
           _dirty |= PaintDirt.radial;
+        } else if (isAngular) {
+          _dirty |= PaintDirt.angular;
         }
 
-        var remaining = view.lengthInBytes - offset - 16 - trailingBytes;
+        var remaining = view.lengthInBytes - offset - 16;
         var stopsAvailable = remaining ~/ 8;
         var stopsToWrite =
             min(stopsAvailable, (gradient.stops.length - writeStopIndex));
@@ -218,36 +254,31 @@ abstract class BufferedRenderPaint extends RenderPaint {
             view.setFloat32(offset, gradient.radius, Endian.little);
             offset += 4;
           } else {
-            var linear = gradient as RenderLinearGradient;
-            view.setFloat32(offset, linear.end.x, Endian.little);
+            // A sweep writes the linear payload, so the reader consumes the
+            // same bytes whichever of the two it is.
+            final end = isAngular
+                ? gradient.end
+                : (gradient as RenderLinearGradient).end;
+            view.setFloat32(offset, end.x, Endian.little);
             offset += 4;
-            view.setFloat32(offset, linear.end.y, Endian.little);
+            view.setFloat32(offset, end.y, Endian.little);
             offset += 4;
           }
           // Stop looping, we've built the gradient.
           _dirty |= PaintDirt.done;
           break;
         } else {
-          // Gotta flush we're out of space. The trailing fields have not been
-          // written into this chunk, so their flags must not go with it --
-          // native reads a float per flag and would consume stop bytes. Keep
-          // them dirty for the final chunk, which does write them.
-          updatePaint(_dirty & ~_trailingDirt, wroteStops);
+          // Gotta flush we're out of space.
+          updatePaint(_dirty, wroteStops);
           wroteStops = 0;
-          _dirty &= _trailingDirt;
+          _dirty = 0;
           offset = 0;
         }
       }
+    } else if ((_dirty & PaintDirt.gradient) != 0) {
+      wroteStops = removeGradientStops;
     }
 
-    if ((_dirty & PaintDirt.feather) != 0) {
-      view.setFloat32(offset, _feather, Endian.little);
-      offset += 4;
-    }
-    if ((_dirty & PaintDirt.additiveness) != 0) {
-      view.setFloat32(offset, _additiveness, Endian.little);
-      offset += 4;
-    }
     updatePaint(_dirty, wroteStops);
     _dirty = 0;
   }

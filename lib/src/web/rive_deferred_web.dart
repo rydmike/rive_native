@@ -19,6 +19,7 @@ late js.JSFunction _sampleStats;
 late js.JSFunction _lastRecordUs;
 late js.JSFunction _lastReplayUs;
 late js.JSFunction _lastFrames;
+late js.JSFunction _abandonTargets;
 // Postdates the thread stats, so null on older wasm builds.
 js.JSFunction? _lastStreamPeakBytes;
 bool _linked = false;
@@ -34,6 +35,8 @@ class DeferredWasm {
     _lastRecordUs = module['_riveDeferredLastRecordUs'] as js.JSFunction;
     _lastReplayUs = module['_riveDeferredLastReplayUs'] as js.JSFunction;
     _lastFrames = module['_riveDeferredLastFrames'] as js.JSFunction;
+    _abandonTargets =
+        module['_riveDeferredSessionAbandonTargets'] as js.JSFunction;
     _lastStreamPeakBytes =
         module['_riveDeferredLastStreamPeakBytes'] as js.JSFunction?;
     _linked = true;
@@ -99,6 +102,17 @@ void webRendererUseDeferredSession(js.JSAny? rendererPtr, int sessionAddress) {
   }
   _rendererUseDeferredSession.callAsFunction(
       null, rendererPtr, sessionAddress.toJS);
+}
+
+/// Drops the frame the session's texture may have left open, before that
+/// texture detaches: the detach can run on the replay worker, and an open
+/// frame is recording-thread state that would otherwise stay shut. A web
+/// session serves one texture, so every open frame is that texture's.
+void webDeferredAbandonOpenTargets(int sessionAddress) {
+  if (!_linked || sessionAddress == 0) {
+    return;
+  }
+  _abandonTargets.callAsFunction(null, sessionAddress.toJS);
 }
 
 /// Not implemented on web: destroys wait for the session's next drawn frame.

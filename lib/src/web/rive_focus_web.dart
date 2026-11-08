@@ -35,6 +35,8 @@ late js.JSFunction _disposeFocusManager;
 late js.JSFunction _focusManagerGetPrimaryFocus;
 late js.JSFunction _focusManagerSetFocus;
 late js.JSFunction _focusManagerClearFocus;
+late js.JSFunction _focusManagerPressBegan;
+late js.JSFunction _focusManagerPressEnded;
 late js.JSFunction _focusManagerHasFocus;
 late js.JSFunction _focusManagerHasPrimaryFocus;
 late js.JSFunction _focusManagerAddChild;
@@ -341,6 +343,17 @@ class NativeFocusManagerWasmWrapper implements focus.FocusManager {
     if (nodePtr != null) {
       _focusManagerSetFocus.callAsFunction(null, nativePtr.toJS, nodePtr.toJS);
     }
+  }
+
+  @override
+  void pressBegan() {
+    _focusManagerPressBegan.callAsFunction(null, nativePtr.toJS);
+  }
+
+  @override
+  void pressEnded(double x, double y) {
+    _focusManagerPressEnded.callAsFunction(
+        null, nativePtr.toJS, x.toJS, y.toJS);
   }
 
   @override
@@ -668,6 +681,17 @@ class FocusManagerWasm implements focus.FocusManager {
   }
 
   @override
+  void pressBegan() {
+    _focusManagerPressBegan.callAsFunction(null, nativePtr.toJS);
+  }
+
+  @override
+  void pressEnded(double x, double y) {
+    _focusManagerPressEnded.callAsFunction(
+        null, nativePtr.toJS, x.toJS, y.toJS);
+  }
+
+  @override
   void clearFocus() {
     _focusManagerClearFocus.callAsFunction(null, nativePtr.toJS);
   }
@@ -949,6 +973,10 @@ class FocusManagerWasm implements focus.FocusManager {
     _focusManagerSetFocus = module['_focusManagerSetFocus'] as js.JSFunction;
     _focusManagerClearFocus =
         module['_focusManagerClearFocus'] as js.JSFunction;
+    _focusManagerPressBegan =
+        module['_focusManagerPressBegan'] as js.JSFunction;
+    _focusManagerPressEnded =
+        module['_focusManagerPressEnded'] as js.JSFunction;
     _focusManagerHasFocus = module['_focusManagerHasFocus'] as js.JSFunction;
     _focusManagerHasPrimaryFocus =
         module['_focusManagerHasPrimaryFocus'] as js.JSFunction;

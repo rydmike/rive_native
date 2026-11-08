@@ -47,6 +47,7 @@
 #include "rive/animation/cubic_ease_interpolator.hpp"
 #include "rive/animation/cubic_value_interpolator.hpp"
 #include "rive/animation/elastic_interpolator.hpp"
+#include "rive/generated/scripted/scripted_interpolator_base.hpp"
 #include "rive/animation/keyframe_interpolator.hpp"
 #include "rive/assets/file_asset.hpp"
 #include "rive/assets/image_asset.hpp"
@@ -65,7 +66,7 @@
 #include "rive/layout/layout_data.hpp"
 #include "rive/viewmodel/runtime/viewmodel_runtime.hpp"
 #include "rive/core/vector_binary_writer.hpp"
-#ifdef WITH_RIVE_SCRIPTING
+#ifdef WITH_RIVE_SCRIPTING_LUAU
 #include "rive/lua/scripting_vm.hpp"
 #endif
 #ifdef RIVE_MICROPROFILE
@@ -81,11 +82,11 @@ static std::vector<uint8_t> g_eventBuffer;
 
 static void writeUint64(rive::VectorBinaryWriter& writer, uint64_t value)
 {
-    writer.write(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
+  writer.write(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
 }
 static void writeInt64(rive::VectorBinaryWriter& writer, int64_t value)
 {
-    writer.write(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
+  writer.write(reinterpret_cast<const uint8_t*>(&value), sizeof(value));
 }
 #endif
 #include <map>
@@ -119,22 +120,22 @@ extern std::unordered_map<rive::FocusManager*, emscripten::val>
 class ViewModelInstanceRegistrarImpl : public ViewModelInstanceRegistrar
 {
 public:
-    void registerInstance(ViewModelInstance* ptr,
-                          rcp<ViewModelInstance> ref) override
+  void registerInstance(ViewModelInstance* ptr, rcp<ViewModelInstance> ref)
+      override
+  {
+    if (ptr != nullptr)
     {
-        if (ptr != nullptr)
-        {
-            m_map[ptr] = std::move(ref);
-        }
+      m_map[ptr] = std::move(ref);
     }
-    bool contains(ViewModelInstance* ptr) const override
-    {
-        return ptr != nullptr && m_map.find(ptr) != m_map.end();
-    }
-    void clear() override { m_map.clear(); }
+  }
+  bool contains(ViewModelInstance* ptr) const override
+  {
+    return ptr != nullptr && m_map.find(ptr) != m_map.end();
+  }
+  void clear() override { m_map.clear(); }
 
 private:
-    std::unordered_map<ViewModelInstance*, rcp<ViewModelInstance>> m_map;
+  std::unordered_map<ViewModelInstance*, rcp<ViewModelInstance>> m_map;
 };
 #endif
 
@@ -197,15 +198,16 @@ typedef void (*ViewModelUpdateColor)(uint64_t pointer, int value);
 typedef void (*ViewModelUpdateString)(uint64_t pointer, const char* value);
 typedef void (*ViewModelUpdateTrigger)(uint64_t pointer, uint32_t value);
 typedef void (*ViewModelUpdateEnum)(uint64_t pointer, uint32_t value);
-typedef void (*ViewModelUpdateSymbolListIndex)(uint64_t pointer,
-                                               uint32_t value);
+typedef void (
+    *ViewModelUpdateSymbolListIndex)(uint64_t pointer, uint32_t value);
 typedef void (*ViewModelUpdateAsset)(uint64_t pointer, uint32_t value);
 typedef void (*ViewModelUpdateArtboard)(uint64_t pointer, uint32_t value);
 typedef void (*ViewModelUpdateList)(uint64_t pointer);
 typedef void (*ViewModelUpdateViewModel)(uint64_t pointer);
-typedef void (*ViewModelInstanceSerialized)(uint64_t pointer,
-                                            const uint8_t* data,
-                                            size_t size);
+typedef void (*ViewModelInstanceSerialized)(
+    uint64_t pointer,
+    const uint8_t* data,
+    size_t size);
 ViewModelUpdateNumber g_viewModelUpdateNumber = nullptr;
 ViewModelUpdateBoolean g_viewModelUpdateBoolean = nullptr;
 ViewModelUpdateColor g_viewModelUpdateColor = nullptr;
@@ -222,61 +224,60 @@ ViewModelUpdateViewModel g_viewModelUpdateViewModel = nullptr;
 
 using namespace rive;
 
-typedef bool (*AssetLoaderCallback)(FileAsset* asset,
-                                    const uint8_t* bytes,
-                                    const size_t size);
+typedef bool (*AssetLoaderCallback)(
+    FileAsset* asset,
+    const uint8_t* bytes,
+    const size_t size);
 
 #ifndef WITH_RIVE_TOOLS
 // Runtime builds compile without WITH_RIVE_TOOLS, but we still export
 // callback setter symbols that use these types in their signatures.
 typedef void (*ArtboardCallback)(void* artboardPtr);
-typedef uint8_t (*TestBoundsCallback)(void* artboardPtr,
-                                      float x,
-                                      float y,
-                                      bool skip);
+typedef uint8_t (
+    *TestBoundsCallback)(void* artboardPtr, float x, float y, bool skip);
 typedef uint8_t (*IsAncestorCallback)(void* artboardPtr, uint16_t artboardId);
-typedef float (*RootTransformCallback)(void* artboardPtr,
-                                       float x,
-                                       float y,
-                                       bool xAxis);
-typedef void (*InputChanged)(StateMachineInstance* stateMachine,
-                             uint64_t index);
+typedef float (
+    *RootTransformCallback)(void* artboardPtr, float x, float y, bool xAxis);
+typedef void (
+    *InputChanged)(StateMachineInstance* stateMachine, uint64_t index);
 typedef void (*DataBindChanged)();
 #endif
 
 #ifdef WITH_RIVE_TOOLS
 // Re-imports one artboard in place from its own byte run. Returns non-zero on
 // success. Every instance of that artboard must have been released first.
-EXPORT uint32_t riveFileReplaceArtboard(File* file,
-                                        uint64_t index,
-                                        const uint8_t* bytes,
-                                        uint64_t length)
+EXPORT uint32_t riveFileReplaceArtboard(
+    File* file,
+    uint64_t index,
+    const uint8_t* bytes,
+    uint64_t length)
 {
-    if (file == nullptr || bytes == nullptr || length == 0)
-    {
-        return 0;
-    }
-    return file->replaceArtboard((size_t)index, Span(bytes, (size_t)length)) ==
-                   ImportResult::success
-               ? 1
-               : 0;
+  if (file == nullptr || bytes == nullptr || length == 0)
+  {
+    return 0;
+  }
+  return file->replaceArtboard((size_t)index, Span(bytes, (size_t)length)) ==
+                 ImportResult::success
+             ? 1
+             : 0;
 }
 
 // Where the artboard at [index] sits in the stream this file was imported
 // from, relative to the end of the header. Lets the exporter's recorded ranges
 // be checked against what the runtime actually read.
-EXPORT void riveFileArtboardByteRange(File* file,
-                                      uint64_t index,
-                                      uint64_t* outStart,
-                                      uint64_t* outEnd)
+EXPORT void riveFileArtboardByteRange(
+    File* file,
+    uint64_t index,
+    uint64_t* outStart,
+    uint64_t* outEnd)
 {
-    if (file == nullptr || outStart == nullptr || outEnd == nullptr)
-    {
-        return;
-    }
-    auto range = file->artboardByteRange((size_t)index);
-    *outStart = (uint64_t)range.start;
-    *outEnd = (uint64_t)range.end;
+  if (file == nullptr || outStart == nullptr || outEnd == nullptr)
+  {
+    return;
+  }
+  auto range = file->artboardByteRange((size_t)index);
+  *outStart = (uint64_t)range.start;
+  *outEnd = (uint64_t)range.end;
 }
 #endif
 
@@ -295,11 +296,11 @@ EXPORT uint32_t debugAnimationCount() { return g_animationCount; }
 EXPORT uint32_t debugViewModelRuntimeCount() { return g_viewModelRuntimeCount; }
 EXPORT uint32_t debugViewModelInstanceRuntimeCount()
 {
-    return g_viewModelInstanceRuntimeCount;
+  return g_viewModelInstanceRuntimeCount;
 }
 EXPORT uint32_t debugViewModelInstanceValueRuntimeCount()
 {
-    return g_viewModelInstanceValueRuntimeCount;
+  return g_viewModelInstanceValueRuntimeCount;
 }
 EXPORT uint32_t debugBindableArtboardCount() { return g_bindableArtboardCount; }
 #endif
@@ -319,293 +320,302 @@ DataBind* WrappedDataBind::dataBind() { return m_dataBind; }
 class WrappedBindableArtboard
 {
 public:
-    WrappedBindableArtboard(rcp<BindableArtboard> artboard, rcp<File> file) :
-        m_file(file), m_artboard(artboard)
-    {
+  WrappedBindableArtboard(rcp<BindableArtboard> artboard, rcp<File> file)
+      : m_file(file)
+      , m_artboard(artboard)
+  {
 #ifdef DEBUG
-        g_bindableArtboardCount++;
+    g_bindableArtboardCount++;
 #endif
-    }
+  }
 
 #ifdef DEBUG
-    ~WrappedBindableArtboard() { g_bindableArtboardCount--; }
+  ~WrappedBindableArtboard() { g_bindableArtboardCount--; }
 #endif
 
-    rcp<BindableArtboard> artboard()
-    {
-        assert(m_artboard);
-        return m_artboard;
-    }
+  rcp<BindableArtboard> artboard()
+  {
+    assert(m_artboard);
+    return m_artboard;
+  }
 
 private:
-    rcp<File> m_file;
-    rcp<BindableArtboard> m_artboard;
+  rcp<File> m_file;
+  rcp<BindableArtboard> m_artboard;
 };
 
 WrappedArtboard::WrappedArtboard(
     std::unique_ptr<ArtboardInstance>&& artboardInstance,
-    rcp<File> file) :
-    m_file(file), m_artboard(std::move(artboardInstance))
+    rcp<File> file)
+    : m_file(file)
+    , m_artboard(std::move(artboardInstance))
 {
 #ifdef WITH_RIVE_TOOLS
-    // Events should call back with the wrapper.
-    m_artboard->callbackUserData = this;
+  // Events should call back with the wrapper.
+  m_artboard->callbackUserData = this;
 #endif
 #ifdef DEBUG
-    g_artboardCount++;
+  g_artboardCount++;
 #endif
 }
 
 WrappedArtboard::~WrappedArtboard()
 {
-    // Make sure artboard is deleted before file.
-    m_artboard = nullptr;
-    m_file = nullptr;
+  // Make sure artboard is deleted before file.
+  m_artboard = nullptr;
+  m_file = nullptr;
 
 #if defined(__EMSCRIPTEN__)
-    _webLayoutChangedCallbacks.erase(this);
-    _webLayoutDirtyCallbacks.erase(this);
-    _webTransformDirtyCallbacks.erase(this);
-    _webEventCallbacks.erase(this);
-    _webTestBoundsCallbacks.erase(this);
-    _webIsAncestorCallbacks.erase(this);
-    _webRootTransformCallbacks.erase(this);
+  _webLayoutChangedCallbacks.erase(this);
+  _webLayoutDirtyCallbacks.erase(this);
+  _webTransformDirtyCallbacks.erase(this);
+  _webEventCallbacks.erase(this);
+  _webTestBoundsCallbacks.erase(this);
+  _webIsAncestorCallbacks.erase(this);
+  _webRootTransformCallbacks.erase(this);
 #endif
 
 #ifdef DEBUG
-    g_artboardCount--;
+  g_artboardCount--;
 #endif
 }
 
-void WrappedArtboard::notify(const std::vector<EventReport>& events,
-                             NestedArtboard* context)
+void WrappedArtboard::notify(
+    const std::vector<EventReport>& events,
+    NestedArtboard* context)
 {
-    if (m_eventCallback == nullptr || context != nullptr)
+  if (m_eventCallback == nullptr || context != nullptr)
+  {
+    // No callback or it came from a nested artboard, don't report up.
+    return;
+  }
+  for (auto report : events)
+  {
+    uint32_t id = m_artboard->idOf(report.event());
+    if (id == 0)
     {
-        // No callback or it came from a nested artboard, don't report up.
-        return;
+      // Couldn't find id.
+      continue;
     }
-    for (auto report : events)
-    {
-        uint32_t id = m_artboard->idOf(report.event());
-        if (id == 0)
-        {
-            // Couldn't find id.
-            continue;
-        }
-        m_eventCallback(this, id);
-    }
+    m_eventCallback(this, id);
+  }
 }
 
 void WrappedArtboard::monitorEvents(LinearAnimationInstance* animation)
 {
-    animation->addNestedEventListener(this);
+  animation->addNestedEventListener(this);
 }
 
 void WrappedArtboard::monitorEvents(StateMachineInstance* stateMachine)
 {
-    stateMachine->addNestedEventListener(this);
+  stateMachine->addNestedEventListener(this);
 }
 
 void WrappedArtboard::addDataBind(WrappedDataBind* dataBind)
 {
-    m_dataBinds.push_back(dataBind);
+  m_dataBinds.push_back(dataBind);
 }
 
 void WrappedArtboard::deleteDataBinds()
 {
 
-    for (auto dataBind : m_dataBinds)
-    {
-        dataBind->deleteDataBind();
-    }
-    m_dataBinds.clear();
+  for (auto dataBind : m_dataBinds)
+  {
+    dataBind->deleteDataBind();
+  }
+  m_dataBinds.clear();
 }
 
 ArtboardInstance* WrappedArtboard::artboard()
 {
-    assert(m_artboard);
-    return m_artboard.get();
+  assert(m_artboard);
+  return m_artboard.get();
 }
 
 class WrappedStateMachine : public RefCnt<WrappedStateMachine>
 {
 public:
-    WrappedStateMachine(
-        rcp<WrappedArtboard> artboard,
-        std::unique_ptr<StateMachineInstance>&& stateMachineInstance) :
-        m_wrappedArtboard(std::move(artboard)),
-        m_stateMachine(std::move(stateMachineInstance))
-    {
+  WrappedStateMachine(
+      rcp<WrappedArtboard> artboard,
+      std::unique_ptr<StateMachineInstance>&& stateMachineInstance)
+      : m_wrappedArtboard(std::move(artboard))
+      , m_stateMachine(std::move(stateMachineInstance))
+  {
 #ifdef DEBUG
-        g_stateMachineCount++;
+    g_stateMachineCount++;
 #endif
-    }
+  }
 
-    ~WrappedStateMachine()
-    {
+  ~WrappedStateMachine()
+  {
 #ifdef DEBUG
-        g_stateMachineCount--;
+    g_stateMachineCount--;
 #endif
-    }
+  }
 
-    StateMachineInstance* stateMachine() { return m_stateMachine.get(); }
+  StateMachineInstance* stateMachine() { return m_stateMachine.get(); }
 
-    WrappedArtboard* wrappedArtboard()
-    {
-        assert(m_wrappedArtboard);
-        return m_wrappedArtboard.get();
-    };
+  WrappedArtboard* wrappedArtboard()
+  {
+    assert(m_wrappedArtboard);
+    return m_wrappedArtboard.get();
+  };
 
 private:
-    rcp<WrappedArtboard> m_wrappedArtboard;
-    std::unique_ptr<StateMachineInstance> m_stateMachine;
+  rcp<WrappedArtboard> m_wrappedArtboard;
+  std::unique_ptr<StateMachineInstance> m_stateMachine;
 };
 
 class WrappedInput
 {
 public:
-    WrappedInput(rcp<WrappedStateMachine> stateMachineInstance,
-                 SMIInput* input) :
-        m_input(input), m_wrappedMachine(stateMachineInstance)
-    {}
+  WrappedInput(rcp<WrappedStateMachine> stateMachineInstance, SMIInput* input)
+      : m_input(input)
+      , m_wrappedMachine(stateMachineInstance)
+  {}
 
-    ~WrappedInput() {}
+  ~WrappedInput() {}
 
-    SMIInput* input() { return m_input; }
-    SMINumber* number()
+  SMIInput* input() { return m_input; }
+  SMINumber* number()
+  {
+    if (m_input->inputCoreType() != StateMachineNumberBase::typeKey)
     {
-        if (m_input->inputCoreType() != StateMachineNumberBase::typeKey)
-        {
-            return nullptr;
-        }
-        return static_cast<SMINumber*>(m_input);
+      return nullptr;
     }
+    return static_cast<SMINumber*>(m_input);
+  }
 
-    SMIBool* boolean()
+  SMIBool* boolean()
+  {
+    if (m_input->inputCoreType() != StateMachineBoolBase::typeKey)
     {
-        if (m_input->inputCoreType() != StateMachineBoolBase::typeKey)
-        {
-            return nullptr;
-        }
-        return static_cast<SMIBool*>(m_input);
+      return nullptr;
     }
+    return static_cast<SMIBool*>(m_input);
+  }
 
-    void fire()
+  void fire()
+  {
+    if (m_input->inputCoreType() != StateMachineTriggerBase::typeKey)
     {
-        if (m_input->inputCoreType() != StateMachineTriggerBase::typeKey)
-        {
-            return;
-        }
-        static_cast<SMITrigger*>(m_input)->fire();
+      return;
     }
+    static_cast<SMITrigger*>(m_input)->fire();
+  }
 
 private:
-    rive::SMIInput* m_input;
-    rcp<WrappedStateMachine> m_wrappedMachine;
+  rive::SMIInput* m_input;
+  rcp<WrappedStateMachine> m_wrappedMachine;
 };
 
 class WrappedTextValueRun
 {
 public:
-    WrappedTextValueRun(rcp<WrappedArtboard> artboard,
-                        TextValueRun* textValueRun,
-                        const std::string& path = "") :
-        m_textValueRun(textValueRun), m_wrappedArtboard(artboard), m_path(path)
-    {}
+  WrappedTextValueRun(
+      rcp<WrappedArtboard> artboard,
+      TextValueRun* textValueRun,
+      const std::string& path = "")
+      : m_textValueRun(textValueRun)
+      , m_wrappedArtboard(artboard)
+      , m_path(path)
+  {}
 
-    ~WrappedTextValueRun() {}
+  ~WrappedTextValueRun() {}
 
-    TextValueRun* textValueRun() { return m_textValueRun; }
+  TextValueRun* textValueRun() { return m_textValueRun; }
 
-    const std::string& path() const { return m_path; }
+  const std::string& path() const { return m_path; }
 
 private:
-    rive::TextValueRun* m_textValueRun;
-    rcp<WrappedArtboard> m_wrappedArtboard;
-    std::string m_path;
+  rive::TextValueRun* m_textValueRun;
+  rcp<WrappedArtboard> m_wrappedArtboard;
+  std::string m_path;
 };
 
 class WrappedEvent : public RefCnt<WrappedEvent>
 {
 public:
-    WrappedEvent(rcp<WrappedStateMachine> stateMachineInstance, Event* event) :
-        m_event(event), m_wrappedMachine(stateMachineInstance)
-    {}
+  WrappedEvent(rcp<WrappedStateMachine> stateMachineInstance, Event* event)
+      : m_event(event)
+      , m_wrappedMachine(stateMachineInstance)
+  {}
 
-    ~WrappedEvent() {}
+  ~WrappedEvent() {}
 
-    Event* event() { return m_event; }
+  Event* event() { return m_event; }
 
 private:
-    rive::Event* m_event;
-    rcp<WrappedStateMachine> m_wrappedMachine;
+  rive::Event* m_event;
+  rcp<WrappedStateMachine> m_wrappedMachine;
 };
 
 class WrappedCustomProperty
 {
 public:
-    WrappedCustomProperty(rcp<WrappedEvent> event,
-                          CustomProperty* customProperty) :
-        m_customProperty(customProperty), m_wrappedEvent(event)
-    {}
+  WrappedCustomProperty(rcp<WrappedEvent> event, CustomProperty* customProperty)
+      : m_customProperty(customProperty)
+      , m_wrappedEvent(event)
+  {}
 
-    ~WrappedCustomProperty() {}
+  ~WrappedCustomProperty() {}
 
-    CustomProperty* customProperty() { return m_customProperty; }
+  CustomProperty* customProperty() { return m_customProperty; }
 
 private:
-    rive::CustomProperty* m_customProperty;
-    rcp<WrappedEvent> m_wrappedEvent;
+  rive::CustomProperty* m_customProperty;
+  rcp<WrappedEvent> m_wrappedEvent;
 };
 
 class WrappedComponent
 {
 public:
-    WrappedComponent(rcp<WrappedArtboard> wrappedArtboard,
-                     TransformComponent* component) :
-        m_component(component), m_wrappedArtboard(std::move(wrappedArtboard))
-    {}
+  WrappedComponent(
+      rcp<WrappedArtboard> wrappedArtboard,
+      TransformComponent* component)
+      : m_component(component)
+      , m_wrappedArtboard(std::move(wrappedArtboard))
+  {}
 
-    TransformComponent* component() { return m_component; }
+  TransformComponent* component() { return m_component; }
 
 private:
-    TransformComponent* m_component;
-    rcp<WrappedArtboard> m_wrappedArtboard;
+  TransformComponent* m_component;
+  rcp<WrappedArtboard> m_wrappedArtboard;
 };
 
 class WrappedLinearAnimation : public RefCnt<WrappedLinearAnimation>
 {
 public:
-    WrappedLinearAnimation(
-        rcp<WrappedArtboard> artboard,
-        std::unique_ptr<LinearAnimationInstance>&& linearAnimation) :
-        m_linearAnimation(std::move(linearAnimation)),
-        m_wrappedArtboard(artboard)
-    {
+  WrappedLinearAnimation(
+      rcp<WrappedArtboard> artboard,
+      std::unique_ptr<LinearAnimationInstance>&& linearAnimation)
+      : m_linearAnimation(std::move(linearAnimation))
+      , m_wrappedArtboard(artboard)
+  {
 #ifdef DEBUG
-        g_animationCount++;
+    g_animationCount++;
 #endif
-    }
-    ~WrappedLinearAnimation()
-    {
-        m_linearAnimation = nullptr;
-        m_wrappedArtboard = nullptr;
+  }
+  ~WrappedLinearAnimation()
+  {
+    m_linearAnimation = nullptr;
+    m_wrappedArtboard = nullptr;
 #ifdef DEBUG
-        g_animationCount--;
+    g_animationCount--;
 #endif
-    }
-    LinearAnimationInstance* animation() { return m_linearAnimation.get(); }
+  }
+  LinearAnimationInstance* animation() { return m_linearAnimation.get(); }
 
-    WrappedArtboard* wrappedArtboard()
-    {
-        assert(m_wrappedArtboard);
-        return m_wrappedArtboard.get();
-    }
+  WrappedArtboard* wrappedArtboard()
+  {
+    assert(m_wrappedArtboard);
+    return m_wrappedArtboard.get();
+  }
 
 private:
-    std::unique_ptr<LinearAnimationInstance> m_linearAnimation;
-    rcp<WrappedArtboard> m_wrappedArtboard;
+  std::unique_ptr<LinearAnimationInstance> m_linearAnimation;
+  rcp<WrappedArtboard> m_wrappedArtboard;
 };
 
 #pragma region ViewModelRuntime Classes
@@ -613,117 +623,119 @@ private:
 class WrappedViewModelRuntime
 {
 public:
-    WrappedViewModelRuntime(ViewModelRuntime* viewModelRuntime,
-                            rcp<File> file) :
-        m_file(file), m_viewModelRuntime(viewModelRuntime)
-    {
+  WrappedViewModelRuntime(ViewModelRuntime* viewModelRuntime, rcp<File> file)
+      : m_file(file)
+      , m_viewModelRuntime(viewModelRuntime)
+  {
 #ifdef DEBUG
-        g_viewModelRuntimeCount++;
+    g_viewModelRuntimeCount++;
 #endif
-    }
+  }
 
-    ~WrappedViewModelRuntime()
-    {
-        // Make sure viewModelRuntime is deleted before file.
-        m_viewModelRuntime = nullptr;
-        m_file = nullptr;
+  ~WrappedViewModelRuntime()
+  {
+    // Make sure viewModelRuntime is deleted before file.
+    m_viewModelRuntime = nullptr;
+    m_file = nullptr;
 
 #ifdef DEBUG
-        g_viewModelRuntimeCount--;
+    g_viewModelRuntimeCount--;
 #endif
-    }
+  }
 
-    ViewModelRuntime* viewModel() { return m_viewModelRuntime; }
+  ViewModelRuntime* viewModel() { return m_viewModelRuntime; }
 
 private:
-    rcp<File> m_file;
-    ViewModelRuntime* m_viewModelRuntime;
+  rcp<File> m_file;
+  ViewModelRuntime* m_viewModelRuntime;
 };
 
 class WrappedVMIRuntime : public RefCnt<WrappedVMIRuntime>
 {
 public:
-    WrappedVMIRuntime(rcp<ViewModelInstanceRuntime> viewModelInstanceRuntime) :
-        m_viewModelInstanceRuntime(viewModelInstanceRuntime)
-    {
+  WrappedVMIRuntime(rcp<ViewModelInstanceRuntime> viewModelInstanceRuntime)
+      : m_viewModelInstanceRuntime(viewModelInstanceRuntime)
+  {
 #ifdef DEBUG
-        g_viewModelInstanceRuntimeCount++;
+    g_viewModelInstanceRuntimeCount++;
 #endif
-    }
+  }
 
-    ~WrappedVMIRuntime()
-    {
+  ~WrappedVMIRuntime()
+  {
 #ifdef DEBUG
-        g_viewModelInstanceRuntimeCount--;
+    g_viewModelInstanceRuntimeCount--;
 #endif
-    }
+  }
 
-    ViewModelInstanceRuntime* instance()
-    {
-        assert(m_viewModelInstanceRuntime);
-        return m_viewModelInstanceRuntime.get();
-    }
+  ViewModelInstanceRuntime* instance()
+  {
+    assert(m_viewModelInstanceRuntime);
+    return m_viewModelInstanceRuntime.get();
+  }
 
 private:
-    rcp<ViewModelInstanceRuntime> m_viewModelInstanceRuntime;
+  rcp<ViewModelInstanceRuntime> m_viewModelInstanceRuntime;
 };
 
 template <typename T = ViewModelInstanceValueRuntime>
 class WrappedVMIValueRuntime
 {
 public:
-    WrappedVMIValueRuntime(rcp<WrappedVMIRuntime> viewModelInstanceRuntime,
-                           T* value) :
-        m_viewModelInstanceRuntime(viewModelInstanceRuntime), m_value(value)
-    {
+  WrappedVMIValueRuntime(
+      rcp<WrappedVMIRuntime> viewModelInstanceRuntime,
+      T* value)
+      : m_viewModelInstanceRuntime(viewModelInstanceRuntime)
+      , m_value(value)
+  {
 #ifdef DEBUG
-        g_viewModelInstanceValueRuntimeCount++;
+    g_viewModelInstanceValueRuntimeCount++;
 #endif
-    }
+  }
 
-    ~WrappedVMIValueRuntime()
-    {
+  ~WrappedVMIValueRuntime()
+  {
 #ifdef DEBUG
-        g_viewModelInstanceValueRuntimeCount--;
+    g_viewModelInstanceValueRuntimeCount--;
 #endif
-    }
+  }
 
-    T* instance() { return m_value; }
+  T* instance() { return m_value; }
 
 private:
-    rcp<WrappedVMIRuntime> m_viewModelInstanceRuntime;
-    T* m_value;
+  rcp<WrappedVMIRuntime> m_viewModelInstanceRuntime;
+  T* m_value;
 };
 
-using WrappedVMINumberRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceNumberRuntime>;
-using WrappedVMIStringRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceStringRuntime>;
-using WrappedVMIBooleanRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceBooleanRuntime>;
-using WrappedVMIEnumRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceEnumRuntime>;
-using WrappedVMIColorRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceColorRuntime>;
-using WrappedVMITriggerRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceTriggerRuntime>;
-using WrappedVMIAssetImageRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceAssetImageRuntime>;
-using WrappedVMIAssetFontRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceAssetFontRuntime>;
-using WrappedVMIListRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceListRuntime>;
-using WrappedVMIArtboardRuntime =
-    WrappedVMIValueRuntime<ViewModelInstanceArtboardRuntime>;
+using WrappedVMINumberRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceNumberRuntime>;
+using WrappedVMIStringRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceStringRuntime>;
+using WrappedVMIBooleanRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceBooleanRuntime>;
+using WrappedVMIEnumRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceEnumRuntime>;
+using WrappedVMIColorRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceColorRuntime>;
+using WrappedVMITriggerRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceTriggerRuntime>;
+using WrappedVMIAssetImageRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceAssetImageRuntime>;
+using WrappedVMIAssetFontRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceAssetFontRuntime>;
+using WrappedVMIListRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceListRuntime>;
+using WrappedVMIArtboardRuntime = WrappedVMIValueRuntime<
+    ViewModelInstanceArtboardRuntime>;
 
 #pragma endregion
 
 EXPORT bool builtWithRiveTools()
 {
 #ifdef WITH_RIVE_TOOLS
-    return true;
+  return true;
 #else
-    return false;
+  return false;
 #endif
 }
 
@@ -732,260 +744,380 @@ EXPORT void freeString(const char* str) { std::free((void*)str); }
 #pragma region File
 
 #if defined(__EMSCRIPTEN__)
-EXPORT WasmPtr loadRiveFile(WasmPtr bufferPtr,
-                            WasmPtr lengthPtr,
-                            WasmPtr factoryPtr,
-                            emscripten::val assetLoader,
-                            WasmPtr vmPtr)
+EXPORT WasmPtr loadRiveFile(
+    WasmPtr bufferPtr,
+    WasmPtr lengthPtr,
+    WasmPtr factoryPtr,
+    emscripten::val assetLoader,
+    WasmPtr vmPtr)
 {
-    auto bytes = (uint8_t*)bufferPtr;
-    if (bytes == nullptr)
-    {
-        return (WasmPtr)(File*)(0x2);
-    }
+  auto bytes = (uint8_t*)bufferPtr;
+  if (bytes == nullptr)
+  {
+    return (WasmPtr)(File*)(0x2);
+  }
 
-    auto factory = (rive::Factory*)factoryPtr;
-    if (factory == nullptr)
-    {
-        // A render context that never came up hands Dart a zero pointer. Stop
-        // here: past this point the null only surfaces as a fault inside
-        // Artboard::initialize on the file's first fill.
-        fprintf(stderr,
-                "loadRiveFile: no Factory, the Rive renderer is unavailable "
-                "on this device.\n");
-        return (WasmPtr) nullptr;
-    }
-    auto length = (SizeType)lengthPtr;
-    auto vm = (ScriptingVM*)vmPtr;
-
-    class FlutterFileAssetLoader : public rive::FileAssetLoader
-    {
-    private:
-        emscripten::val m_callback;
-
-    public:
-        FlutterFileAssetLoader(emscripten::val callback) : m_callback(callback)
-        {}
-
-        bool loadContents(rive::FileAsset& asset,
-                          Span<const uint8_t> inBandBytes,
-                          rive::Factory* factory) override
-        {
-            if (!m_callback.isNull())
-            {
-                asset.ref();
-                return m_callback((WasmPtr)(&asset),
-                                  (WasmPtr)(inBandBytes.data()),
-                                  inBandBytes.size())
-                    .as<bool>();
-            }
-            return false;
-        }
-    };
-
-    rcp<File> file;
-    auto loader = make_rcp<FlutterFileAssetLoader>(assetLoader);
-    if ((file = File::import(Span(bytes, length),
-                             factory,
-                             nullptr, // TODO: Handle results
-                             loader,
-                             vm)))
-    {
-#ifdef WITH_RIVE_TOOLS
-        // The file holds the only pointer to its registrar, and
-        // deleteRiveFile takes it back to destroy it. Kept off a process
-        // global so a load and a delete, which do not run on the same thread,
-        // share no mutable state.
-        file->setViewModelInstanceRegistrar(
-            new ViewModelInstanceRegistrarImpl());
-#endif
-        return (WasmPtr)(file.release());
-    }
+  auto factory = (rive::Factory*)factoryPtr;
+  if (factory == nullptr)
+  {
+    // A render context that never came up hands Dart a zero pointer. Stop
+    // here: past this point the null only surfaces as a fault inside
+    // Artboard::initialize on the file's first fill.
+    fprintf(
+        stderr,
+        "loadRiveFile: no Factory, the Rive renderer is unavailable "
+        "on this device.\n");
     return (WasmPtr) nullptr;
+  }
+  auto length = (SizeType)lengthPtr;
+  auto vm = (ScriptingVM*)vmPtr;
+
+  class FlutterFileAssetLoader : public rive::FileAssetLoader
+  {
+  private:
+    emscripten::val m_callback;
+
+  public:
+    FlutterFileAssetLoader(emscripten::val callback) : m_callback(callback) {}
+
+    bool loadContents(
+        rive::FileAsset& asset,
+        Span<const uint8_t> inBandBytes,
+        rive::Factory* factory) override
+    {
+      if (!m_callback.isNull())
+      {
+        asset.ref();
+        return m_callback(
+                   (WasmPtr)(&asset),
+                   (WasmPtr)(inBandBytes.data()),
+                   inBandBytes.size())
+            .as<bool>();
+      }
+      return false;
+    }
+  };
+
+  rcp<File> file;
+  auto loader = make_rcp<FlutterFileAssetLoader>(assetLoader);
+  if ((file = File::import(
+           Span(bytes, length),
+           factory,
+           nullptr, // TODO: Handle results
+           loader,
+           vm)))
+  {
+#ifdef WITH_RIVE_TOOLS
+    // The file holds the only pointer to its registrar, and
+    // deleteRiveFile takes it back to destroy it. Kept off a process
+    // global so a load and a delete, which do not run on the same thread,
+    // share no mutable state.
+    file->setViewModelInstanceRegistrar(new ViewModelInstanceRegistrarImpl());
+#endif
+    return (WasmPtr)(file.release());
+  }
+  return (WasmPtr) nullptr;
 }
 
 #else
-EXPORT void* loadRiveFile(const uint8_t* bytes,
-                          SizeType length,
-                          rive::Factory* factory,
-                          AssetLoaderCallback assetLoader,
-                          void* vmPtr)
+EXPORT void* loadRiveFile(
+    const uint8_t* bytes,
+    SizeType length,
+    rive::Factory* factory,
+    AssetLoaderCallback assetLoader,
+    void* vmPtr)
 {
-    if (bytes == nullptr)
-    {
-        return (File*)(0x2);
-    }
-    if (factory == nullptr)
-    {
-        // A render context that never came up hands Dart a zero pointer. Stop
-        // here: past this point the null only surfaces as a fault inside
-        // Artboard::initialize on the file's first fill.
-        fprintf(stderr,
-                "loadRiveFile: no Factory, the Rive renderer is unavailable "
-                "on this device.\n");
-        return nullptr;
-    }
-
-    class FlutterFileAssetLoader : public rive::FileAssetLoader
-    {
-    private:
-        AssetLoaderCallback m_callback;
-
-    public:
-        FlutterFileAssetLoader(AssetLoaderCallback callback) :
-            m_callback(callback)
-        {}
-
-        bool loadContents(rive::FileAsset& asset,
-                          Span<const uint8_t> inBandBytes,
-                          rive::Factory* factory) override
-        {
-            if (m_callback != nullptr)
-            {
-                asset.ref();
-                return m_callback(&asset,
-                                  inBandBytes.data(),
-                                  inBandBytes.size());
-            }
-            return false;
-        }
-    };
-
-    rcp<File> file;
-    auto loader = make_rcp<FlutterFileAssetLoader>(assetLoader);
-    auto vm = static_cast<ScriptingVM*>(vmPtr);
-    if ((file = File::import(Span(bytes, length),
-                             factory,
-                             nullptr, // TODO: Handle results
-                             loader,
-                             vm)))
-    {
-#ifdef WITH_RIVE_TOOLS
-        // The file holds the only pointer to its registrar, and
-        // deleteRiveFile takes it back to destroy it. Kept off a process
-        // global so a load and a delete, which do not run on the same thread,
-        // share no mutable state.
-        file->setViewModelInstanceRegistrar(
-            new ViewModelInstanceRegistrarImpl());
-#endif
-        return file.release();
-    }
-
+  if (bytes == nullptr)
+  {
+    return (File*)(0x2);
+  }
+  if (factory == nullptr)
+  {
+    // A render context that never came up hands Dart a zero pointer. Stop
+    // here: past this point the null only surfaces as a fault inside
+    // Artboard::initialize on the file's first fill.
+    fprintf(
+        stderr,
+        "loadRiveFile: no Factory, the Rive renderer is unavailable "
+        "on this device.\n");
     return nullptr;
+  }
+
+  class FlutterFileAssetLoader : public rive::FileAssetLoader
+  {
+  private:
+    AssetLoaderCallback m_callback;
+
+  public:
+    FlutterFileAssetLoader(AssetLoaderCallback callback) : m_callback(callback)
+    {}
+
+    bool loadContents(
+        rive::FileAsset& asset,
+        Span<const uint8_t> inBandBytes,
+        rive::Factory* factory) override
+    {
+      if (m_callback != nullptr)
+      {
+        asset.ref();
+        return m_callback(&asset, inBandBytes.data(), inBandBytes.size());
+      }
+      return false;
+    }
+  };
+
+  rcp<File> file;
+  auto loader = make_rcp<FlutterFileAssetLoader>(assetLoader);
+  auto vm = static_cast<ScriptingVM*>(vmPtr);
+  if ((file = File::import(
+           Span(bytes, length),
+           factory,
+           nullptr, // TODO: Handle results
+           loader,
+           vm)))
+  {
+#ifdef WITH_RIVE_TOOLS
+    // The file holds the only pointer to its registrar, and
+    // deleteRiveFile takes it back to destroy it. Kept off a process
+    // global so a load and a delete, which do not run on the same thread,
+    // share no mutable state.
+    file->setViewModelInstanceRegistrar(new ViewModelInstanceRegistrarImpl());
+#endif
+    return file.release();
+  }
+
+  return nullptr;
 }
 #endif
 
 EXPORT void deleteFileAsset(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    fileAsset->unref();
+  if (fileAsset == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  fileAsset->unref();
 }
+
+#if defined(__EMSCRIPTEN__) && defined(WITH_RIVE_SCRIPTING_WASM)
+// The second step of a web file load, once the page has prepared the file's
+// script modules.
+EXPORT void riveFileStartScripts(File* file)
+{
+  if (file != nullptr)
+  {
+    file->startScripts();
+  }
+}
+#endif
 
 EXPORT void deleteRiveFile(File* file)
 {
-    if (file == nullptr)
-    {
-        return;
-    }
+  if (file == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    // Clear the pointer before destroying the registrar so nothing the file
-    // does below can reach it, and destroy it ahead of the unref: the
-    // instance refs it owns are released first, then the file, which is the
-    // order the map's erase gave.
-    auto* registrar = file->viewModelInstanceRegistrar();
-    file->setViewModelInstanceRegistrar(nullptr);
-    delete registrar;
+  // Clear the pointer before destroying the registrar so nothing the file
+  // does below can reach it, and destroy it ahead of the unref: the
+  // instance refs it owns are released first, then the file, which is the
+  // order the map's erase gave.
+  auto* registrar = file->viewModelInstanceRegistrar();
+  file->setViewModelInstanceRegistrar(nullptr);
+  delete registrar;
 #endif
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    file->unref();
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  file->unref();
 }
 
 EXPORT WrappedArtboard* riveFileArtboardDefault(File* file, bool frameOrigin)
 {
-    if (file == nullptr || file->artboardCount() == 0)
-    {
-        return nullptr;
-    }
+  if (file == nullptr || file->artboardCount() == 0)
+  {
+    return nullptr;
+  }
 
-    auto artboard = file->artboardDefault();
-    if (!artboard)
-    {
-        return nullptr;
-    }
-    artboard->frameOrigin(frameOrigin);
-    return new WrappedArtboard(std::move(artboard), ref_rcp(file));
+  auto artboard = file->artboardDefault();
+  if (!artboard)
+  {
+    return nullptr;
+  }
+  artboard->frameOrigin(frameOrigin);
+  return new WrappedArtboard(std::move(artboard), ref_rcp(file));
 }
 
-EXPORT WrappedArtboard* riveFileArtboardNamed(File* file,
-                                              const char* name,
-                                              bool frameOrigin)
+EXPORT WrappedArtboard* riveFileArtboardNamed(
+    File* file,
+    const char* name,
+    bool frameOrigin)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    auto artboardInstance = file->artboardNamed(name);
-    if (artboardInstance == nullptr)
-    {
-        return nullptr;
-    }
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  auto artboardInstance = file->artboardNamed(name);
+  if (artboardInstance == nullptr)
+  {
+    return nullptr;
+  }
 
-    AdvanceFlags advancingFlags;
-    advancingFlags |= AdvanceFlags::AdvanceNested;
-    artboardInstance->frameOrigin(frameOrigin);
-    artboardInstance->advance(0.0f, advancingFlags);
-    return new WrappedArtboard(std::move(artboardInstance), ref_rcp(file));
+  AdvanceFlags advancingFlags;
+  advancingFlags |= AdvanceFlags::AdvanceNested;
+  artboardInstance->frameOrigin(frameOrigin);
+  artboardInstance->advance(0.0f, advancingFlags);
+  return new WrappedArtboard(std::move(artboardInstance), ref_rcp(file));
 }
 
-EXPORT WrappedBindableArtboard* riveFileArtboardToBindNamed(File* file,
-                                                            const char* name)
+EXPORT WrappedBindableArtboard* riveFileArtboardToBindNamed(
+    File* file,
+    const char* name)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    rcp<BindableArtboard> artboard = file->bindableArtboardNamed(name);
-    if (artboard == nullptr)
-    {
-        return nullptr;
-    }
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  rcp<BindableArtboard> artboard = file->bindableArtboardNamed(name);
+  if (artboard == nullptr)
+  {
+    return nullptr;
+  }
 
-    return new WrappedBindableArtboard(artboard, ref_rcp(file));
+  return new WrappedBindableArtboard(artboard, ref_rcp(file));
 }
 
 EXPORT void deleteBindableArtboard(WrappedBindableArtboard* artboardToBind)
 {
-    if (artboardToBind == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete artboardToBind;
+  if (artboardToBind == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete artboardToBind;
 }
 
-EXPORT WrappedArtboard* riveFileArtboardByIndex(File* file,
-                                                uint32_t index,
-                                                bool frameOrigin)
+EXPORT WrappedArtboard* riveFileArtboardByIndex(
+    File* file,
+    uint32_t index,
+    bool frameOrigin)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
 
-    auto artboardInstance = file->artboardAt(index);
-    if (!artboardInstance)
-    {
-        return nullptr;
-    }
-    AdvanceFlags advancingFlags;
-    advancingFlags |= AdvanceFlags::AdvanceNested;
-    artboardInstance->frameOrigin(frameOrigin);
-    artboardInstance->advance(0.0f, advancingFlags);
-    return new WrappedArtboard(std::move(artboardInstance), ref_rcp(file));
+  auto artboardInstance = file->artboardAt(index);
+  if (!artboardInstance)
+  {
+    return nullptr;
+  }
+  AdvanceFlags advancingFlags;
+  advancingFlags |= AdvanceFlags::AdvanceNested;
+  artboardInstance->frameOrigin(frameOrigin);
+  artboardInstance->advance(0.0f, advancingFlags);
+  return new WrappedArtboard(std::move(artboardInstance), ref_rcp(file));
+}
+
+// The artboard at [index] as a paint source: instanced on the file's own
+// factory, playing its default scene, settled on its first frame.
+EXPORT WrappedArtboardPaintSource* artboardPaintSourceMake(
+    File* file,
+    uint32_t index)
+{
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  Artboard* source = file->artboard(index);
+  if (source == nullptr)
+  {
+    return nullptr;
+  }
+  auto paintSource = ArtboardPaintSource::make(source, source->factory());
+  if (paintSource == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedArtboardPaintSource{ref_rcp(file), std::move(paintSource)};
+}
+
+EXPORT void artboardPaintSourceDelete(WrappedArtboardPaintSource* paintSource)
+{
+  if (paintSource == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete paintSource;
+}
+
+// Bit 0: something wants to keep advancing. Bit 1: the artboard changed, so
+// the paint has to redraw (and the next draw re-rasterizes it).
+EXPORT uint8_t artboardPaintSourceAdvance(
+    WrappedArtboardPaintSource* paintSource,
+    float elapsedSeconds,
+    uint32_t flags)
+{
+  if (paintSource == nullptr)
+  {
+    return 0;
+  }
+  ArtboardPaintSource* source = paintSource->source.get();
+  uint8_t result = source->advance(
+                       elapsedSeconds,
+                       static_cast<AdvanceFlags>(flags))
+                       ? 1
+                       : 0;
+  if (source->needsUpdate())
+  {
+    source->update();
+    result |= 2;
+  }
+  return result;
+}
+
+// Binds the source to [dataContext] (null clears it): the context of the
+// artboard the paint is in, passed straight through.
+EXPORT void artboardPaintSourceSetDataContext(
+    WrappedArtboardPaintSource* paintSource,
+    DataContext* dataContext)
+{
+  if (paintSource == nullptr)
+  {
+    return;
+  }
+  paintSource->source->dataContext(
+      dataContext != nullptr ? ref_rcp(dataContext) : nullptr);
+}
+
+// Applies pending binds. Returns whether the artboard changed, so the paint
+// has to redraw (and the next draw re-rasterizes it).
+EXPORT bool artboardPaintSourceUpdateDataBinds(
+    WrappedArtboardPaintSource* paintSource)
+{
+  if (paintSource == nullptr)
+  {
+    return false;
+  }
+  ArtboardPaintSource* source = paintSource->source.get();
+  source->updateDataBinds();
+  if (source->needsUpdate())
+  {
+    source->update();
+    return true;
+  }
+  return false;
+}
+
+EXPORT void artboardPaintSourceBounds(
+    WrappedArtboardPaintSource* paintSource,
+    float* out)
+{
+  AABB bounds = paintSource != nullptr ? paintSource->source->bounds() : AABB();
+  out[0] = bounds.minX;
+  out[1] = bounds.minY;
+  out[2] = bounds.maxX;
+  out[3] = bounds.maxY;
 }
 
 #pragma endregion
@@ -993,133 +1125,135 @@ EXPORT WrappedArtboard* riveFileArtboardByIndex(File* file,
 #pragma region FileAsset
 
 // Per-frame wasm VM service: arena rewind, handle reap, leak warnings. The
-// returned warning is owned by the VM; valid until the next call, no free.
+// returned warnings are owned by the file, valid until the next call, no free.
 EXPORT const char* riveFileFrameBoundary(File* file)
 {
 #ifdef WITH_RIVE_SCRIPTING_WASM
-    if (file != nullptr)
-    {
-        return file->frameBoundary();
-    }
+  if (file != nullptr)
+  {
+    return file->frameBoundary();
+  }
 #endif
-    return nullptr;
+  return nullptr;
 }
 
 EXPORT const char* riveFileAssetName(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return nullptr;
-    }
+  if (fileAsset == nullptr)
+  {
+    return nullptr;
+  }
 
-    return fileAsset->name().c_str();
+  return fileAsset->name().c_str();
 }
 
 EXPORT const char* riveFileAssetFileExtension(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return nullptr;
-    }
-    return toCString(fileAsset->fileExtension());
+  if (fileAsset == nullptr)
+  {
+    return nullptr;
+  }
+  return toCString(fileAsset->fileExtension());
 }
 
 EXPORT const char* riveFileAssetCdnBaseUrl(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return nullptr;
-    }
+  if (fileAsset == nullptr)
+  {
+    return nullptr;
+  }
 
-    return fileAsset->cdnBaseUrl().c_str();
+  return fileAsset->cdnBaseUrl().c_str();
 }
 
 EXPORT const char* riveFileAssetCdnUuid(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return nullptr;
-    }
-    return toCString(fileAsset->cdnUuidStr());
+  if (fileAsset == nullptr)
+  {
+    return nullptr;
+  }
+  return toCString(fileAsset->cdnUuidStr());
 }
 
 EXPORT uint32_t riveFileAssetId(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return 0;
-    }
+  if (fileAsset == nullptr)
+  {
+    return 0;
+  }
 
-    return fileAsset->assetId();
+  return fileAsset->assetId();
 }
 
 EXPORT uint16_t riveFileAssetCoreType(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr)
-    {
-        return 0;
-    }
-    return fileAsset->coreType();
+  if (fileAsset == nullptr)
+  {
+    return 0;
+  }
+  return fileAsset->coreType();
 }
 
-EXPORT bool riveFileAssetSetRenderImage(FileAsset* fileAsset,
-                                        RenderImage* renderImage)
+EXPORT bool riveFileAssetSetRenderImage(
+    FileAsset* fileAsset,
+    RenderImage* renderImage)
 {
-    if (fileAsset == nullptr || renderImage == nullptr ||
-        !fileAsset->is<ImageAsset>())
-    {
-        return false;
-    }
-    ImageAsset* imageAsset = static_cast<ImageAsset*>(fileAsset);
-    imageAsset->renderImage(ref_rcp(renderImage));
-    return true;
+  if (fileAsset == nullptr || renderImage == nullptr ||
+      !fileAsset->is<ImageAsset>())
+  {
+    return false;
+  }
+  ImageAsset* imageAsset = static_cast<ImageAsset*>(fileAsset);
+  imageAsset->renderImage(ref_rcp(renderImage));
+  return true;
 }
 
 EXPORT float imageAssetGetWidth(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr || !fileAsset->is<ImageAsset>())
-    {
-        return 0.0f;
-    }
-    ImageAsset* imageAsset = static_cast<ImageAsset*>(fileAsset);
-    return imageAsset->width();
+  if (fileAsset == nullptr || !fileAsset->is<ImageAsset>())
+  {
+    return 0.0f;
+  }
+  ImageAsset* imageAsset = static_cast<ImageAsset*>(fileAsset);
+  return imageAsset->width();
 }
 
 EXPORT float imageAssetGetHeight(FileAsset* fileAsset)
 {
-    if (fileAsset == nullptr || !fileAsset->is<ImageAsset>())
-    {
-        return 0.0f;
-    }
-    ImageAsset* imageAsset = static_cast<ImageAsset*>(fileAsset);
-    return imageAsset->height();
+  if (fileAsset == nullptr || !fileAsset->is<ImageAsset>())
+  {
+    return 0.0f;
+  }
+  ImageAsset* imageAsset = static_cast<ImageAsset*>(fileAsset);
+  return imageAsset->height();
 }
 
-EXPORT bool riveFileAssetSetAudioSource(FileAsset* fileAsset,
-                                        AudioSource* audioSource)
+EXPORT bool riveFileAssetSetAudioSource(
+    FileAsset* fileAsset,
+    AudioSource* audioSource)
 {
 #ifdef WITH_RIVE_AUDIO
-    if (fileAsset == nullptr || audioSource == nullptr ||
-        !fileAsset->is<AudioAsset>())
-    {
-        return false;
-    }
-    AudioAsset* audioAsset = static_cast<AudioAsset*>(fileAsset);
-    audioAsset->audioSource(ref_rcp(audioSource));
-    return true;
-#endif
+  if (fileAsset == nullptr || audioSource == nullptr ||
+      !fileAsset->is<AudioAsset>())
+  {
     return false;
+  }
+  AudioAsset* audioAsset = static_cast<AudioAsset*>(fileAsset);
+  audioAsset->audioSource(ref_rcp(audioSource));
+  return true;
+#endif
+  return false;
 }
 
 EXPORT bool riveFileAssetSetFont(FileAsset* fileAsset, Font* font)
 {
-    if (fileAsset == nullptr || font == nullptr || !fileAsset->is<FontAsset>())
-    {
-        return false;
-    }
-    FontAsset* fontAsset = static_cast<FontAsset*>(fileAsset);
-    fontAsset->font(ref_rcp(font));
-    return true;
+  if (fileAsset == nullptr || font == nullptr || !fileAsset->is<FontAsset>())
+  {
+    return false;
+  }
+  FontAsset* fontAsset = static_cast<FontAsset*>(fileAsset);
+  fontAsset->font(ref_rcp(font));
+  return true;
 }
 
 #pragma endregion
@@ -1127,342 +1261,344 @@ EXPORT bool riveFileAssetSetFont(FileAsset* fileAsset, Font* font)
 #pragma region ViewModelRuntime
 EXPORT SizeType riveFileViewModelCount(File* file)
 {
-    if (file == nullptr)
-    {
-        return 0;
-    }
-    return file->viewModelCount();
+  if (file == nullptr)
+  {
+    return 0;
+  }
+  return file->viewModelCount();
 }
 
-EXPORT WrappedViewModelRuntime* riveFileViewModelRuntimeByIndex(File* file,
-                                                                SizeType index)
+EXPORT WrappedViewModelRuntime* riveFileViewModelRuntimeByIndex(
+    File* file,
+    SizeType index)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = file->viewModelByIndex(index);
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedViewModelRuntime(vmi, ref_rcp(file));
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = file->viewModelByIndex(index);
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedViewModelRuntime(vmi, ref_rcp(file));
 }
 
-EXPORT WrappedViewModelRuntime* riveFileViewModelRuntimeByName(File* file,
-                                                               const char* name)
+EXPORT WrappedViewModelRuntime* riveFileViewModelRuntimeByName(
+    File* file,
+    const char* name)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = file->viewModelByName(name);
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedViewModelRuntime(vmi, ref_rcp(file));
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = file->viewModelByName(name);
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedViewModelRuntime(vmi, ref_rcp(file));
 }
 
 EXPORT WrappedViewModelRuntime* riveFileDefaultArtboardViewModelRuntime(
     File* file,
     WrappedArtboard* artboard)
 {
-    if (file == nullptr || artboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = file->defaultArtboardViewModel(artboard->artboard());
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedViewModelRuntime(vmi, ref_rcp(file));
+  if (file == nullptr || artboard == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = file->defaultArtboardViewModel(artboard->artboard());
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedViewModelRuntime(vmi, ref_rcp(file));
 }
 
 EXPORT SizeType riveFileGlobalViewModelCount(File* file)
 {
-    if (file == nullptr)
-    {
-        return 0;
-    }
-    return file->globalViewModels().size();
+  if (file == nullptr)
+  {
+    return 0;
+  }
+  return file->globalViewModels().size();
 }
 
 EXPORT SizeType riveFileArtboardCount(File* file)
 {
-    if (file == nullptr)
-    {
-        return 0;
-    }
-    return file->artboardCount();
+  if (file == nullptr)
+  {
+    return 0;
+  }
+  return file->artboardCount();
 }
 
 EXPORT const char* riveFileArtboardName(File* file, SizeType index)
 {
-    if (file == nullptr || index >= file->artboardCount())
-    {
-        return nullptr;
-    }
-    // Points at the source artboard's own name storage, which outlives this
-    // call.
-    return file->artboard(index)->name().c_str();
+  if (file == nullptr || index >= file->artboardCount())
+  {
+    return nullptr;
+  }
+  // Points at the source artboard's own name storage, which outlives this
+  // call.
+  return file->artboard(index)->name().c_str();
 }
 
 EXPORT const char* riveFileGlobalViewModelName(File* file, SizeType index)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModels = file->globalViewModels();
-    if (index >= viewModels.size())
-    {
-        return nullptr;
-    }
-    // Points at the ViewModel's own name storage, which outlives this call.
-    return viewModels[index]->name().c_str();
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModels = file->globalViewModels();
+  if (index >= viewModels.size())
+  {
+    return nullptr;
+  }
+  // Points at the ViewModel's own name storage, which outlives this call.
+  return viewModels[index]->name().c_str();
 }
 
 EXPORT SizeType
 viewModelRuntimePropertyCount(WrappedViewModelRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return 0;
-    }
-    return wrappedViewModel->viewModel()->propertyCount();
+  if (wrappedViewModel == nullptr)
+  {
+    return 0;
+  }
+  return wrappedViewModel->viewModel()->propertyCount();
 }
 
 EXPORT SizeType
 viewModelRuntimeInstanceCount(WrappedViewModelRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return 0;
-    }
-    return wrappedViewModel->viewModel()->instanceCount();
+  if (wrappedViewModel == nullptr)
+  {
+    return 0;
+  }
+  return wrappedViewModel->viewModel()->instanceCount();
 }
 
 EXPORT void riveAdvanceFrameId()
 {
 #if defined(TESTING) || defined(WITH_RIVE_TOOLS)
-    Artboard::incFrameId();
+  Artboard::incFrameId();
 #endif
 }
 
 EXPORT const char* viewModelRuntimeName(
     WrappedViewModelRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedViewModel->viewModel()->name().c_str();
+  if (wrappedViewModel == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedViewModel->viewModel()->name().c_str();
 }
 
 EXPORT const char* vmiRuntimeName(WrappedVMIRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedViewModel->instance()->name().c_str();
+  if (wrappedViewModel == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedViewModel->instance()->name().c_str();
 }
 
 #ifdef __EMSCRIPTEN__
 emscripten::val buildProperties(std::vector<rive::PropertyData>& properties)
 {
-    emscripten::val jsProperties = emscripten::val::array();
-    for (const auto& prop : properties)
-    {
-        emscripten::val jsProp = emscripten::val::object();
-        jsProp.set("name", prop.name);
-        int val = static_cast<int>(prop.type);
-        jsProp.set("type", val);
-        jsProperties.call<void>("push", jsProp);
-    }
-    return jsProperties;
+  emscripten::val jsProperties = emscripten::val::array();
+  for (const auto& prop : properties)
+  {
+    emscripten::val jsProp = emscripten::val::object();
+    jsProp.set("name", prop.name);
+    int val = static_cast<int>(prop.type);
+    jsProp.set("type", val);
+    jsProperties.call<void>("push", jsProp);
+  }
+  return jsProperties;
 }
 
 emscripten::val viewModelRuntimeProperties(WasmPtr wrappedViewModelPtr)
 {
-    WrappedViewModelRuntime* wrappedViewModel =
-        (WrappedViewModelRuntime*)wrappedViewModelPtr;
-    if (wrappedViewModel == nullptr)
-    {
-        return emscripten::val::null();
-    }
-    auto props = wrappedViewModel->viewModel()->properties();
+  WrappedViewModelRuntime* wrappedViewModel = (WrappedViewModelRuntime*)
+      wrappedViewModelPtr;
+  if (wrappedViewModel == nullptr)
+  {
+    return emscripten::val::null();
+  }
+  auto props = wrappedViewModel->viewModel()->properties();
 
-    return buildProperties(props);
+  return buildProperties(props);
 }
 
 emscripten::val vmiRuntimeProperties(WasmPtr wrappedVMIPtr)
 {
-    WrappedVMIRuntime* wrappedVMI = (WrappedVMIRuntime*)wrappedVMIPtr;
-    if (wrappedVMI == nullptr)
-    {
-        return emscripten::val::null();
-    }
-    auto props = wrappedVMI->instance()->properties();
+  WrappedVMIRuntime* wrappedVMI = (WrappedVMIRuntime*)wrappedVMIPtr;
+  if (wrappedVMI == nullptr)
+  {
+    return emscripten::val::null();
+  }
+  auto props = wrappedVMI->instance()->properties();
 
-    return buildProperties(props);
+  return buildProperties(props);
 }
 
 emscripten::val createDataEnumObject(rive::DataEnum* dataEnum)
 {
-    emscripten::val dataEnumObject = emscripten::val::object();
-    dataEnumObject.set("name", dataEnum->enumName());
-    emscripten::val dataEnumValues = emscripten::val::array();
-    for (auto& value : dataEnum->values())
-    {
-        auto name = value->key();
-        dataEnumValues.call<void>("push", name);
-    }
-    dataEnumObject.set("values", dataEnumValues);
-    return dataEnumObject;
+  emscripten::val dataEnumObject = emscripten::val::object();
+  dataEnumObject.set("name", dataEnum->enumName());
+  emscripten::val dataEnumValues = emscripten::val::array();
+  for (auto& value : dataEnum->values())
+  {
+    auto name = value->key();
+    dataEnumValues.call<void>("push", name);
+  }
+  dataEnumObject.set("values", dataEnumValues);
+  return dataEnumObject;
 }
 
 emscripten::val fileEnums(WasmPtr filePtr)
 {
-    File* file = (File*)filePtr;
-    if (file == nullptr)
-    {
-        return emscripten::val::null();
-    }
-    auto enums = file->enums();
-    emscripten::val jsProperties = emscripten::val::array();
-    for (auto& dataEnum : enums)
-    {
-        auto enumObject = createDataEnumObject(dataEnum);
-        jsProperties.call<void>("push", enumObject);
-    }
-    return jsProperties;
+  File* file = (File*)filePtr;
+  if (file == nullptr)
+  {
+    return emscripten::val::null();
+  }
+  auto enums = file->enums();
+  emscripten::val jsProperties = emscripten::val::array();
+  for (auto& dataEnum : enums)
+  {
+    auto enumObject = createDataEnumObject(dataEnum);
+    jsProperties.call<void>("push", enumObject);
+  }
+  return jsProperties;
 }
 #else
 
 struct ViewModelPropertyDataFFI
 {
-    int type;
-    const char* name;
+  int type;
+  const char* name;
 };
 
 struct ViewModelPropertyDataArray
 {
-    ViewModelPropertyDataFFI* data;
-    int length;
+  ViewModelPropertyDataFFI* data;
+  int length;
 };
 
 ViewModelPropertyDataArray generateViewModelPropertyDataArray(
     std::vector<PropertyData>& props)
 {
-    ViewModelPropertyDataFFI* out = (ViewModelPropertyDataFFI*)malloc(
-        sizeof(ViewModelPropertyDataFFI) * props.size());
+  ViewModelPropertyDataFFI* out = (ViewModelPropertyDataFFI*)malloc(
+      sizeof(ViewModelPropertyDataFFI) * props.size());
 
-    for (size_t i = 0; i < props.size(); ++i)
-    {
-        // The string is only valid for the duration of the
-        // call. In Flutter, we would get invalid data or errors when trying
-        // to access the string: return
-        // viewModel->properties().at(index).name.c_str();
+  for (size_t i = 0; i < props.size(); ++i)
+  {
+    // The string is only valid for the duration of the
+    // call. In Flutter, we would get invalid data or errors when trying
+    // to access the string: return
+    // viewModel->properties().at(index).name.c_str();
 
-        // We copy the string to the heap and return a pointer to it,
-        // because the string is only valid for the duration of the call. We
-        // free up the memory in the `deleteViewModelPropertyDataArray`
-        // function.
-        const std::string& name = props[i].name;
-        char* cstr = (char*)malloc(name.size() + 1);
-        std::memcpy(cstr, name.c_str(), name.size() + 1);
+    // We copy the string to the heap and return a pointer to it,
+    // because the string is only valid for the duration of the call. We
+    // free up the memory in the `deleteViewModelPropertyDataArray`
+    // function.
+    const std::string& name = props[i].name;
+    char* cstr = (char*)malloc(name.size() + 1);
+    std::memcpy(cstr, name.c_str(), name.size() + 1);
 
-        out[i].type = static_cast<int>(props[i].type);
-        out[i].name = cstr;
-    }
+    out[i].type = static_cast<int>(props[i].type);
+    out[i].name = cstr;
+  }
 
-    return {out, static_cast<int>(props.size())};
+  return {out, static_cast<int>(props.size())};
 }
 
 EXPORT ViewModelPropertyDataArray
 viewModelRuntimeProperties(WrappedViewModelRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return {nullptr, 0};
-    }
-    auto props = wrappedViewModel->viewModel()->properties();
-    return generateViewModelPropertyDataArray(props);
+  if (wrappedViewModel == nullptr)
+  {
+    return {nullptr, 0};
+  }
+  auto props = wrappedViewModel->viewModel()->properties();
+  return generateViewModelPropertyDataArray(props);
 }
 
 EXPORT ViewModelPropertyDataArray
 vmiRuntimeProperties(WrappedVMIRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return {nullptr, 0};
-    }
-    auto props = wrappedViewModel->instance()->properties();
-    return generateViewModelPropertyDataArray(props);
+  if (wrappedViewModel == nullptr)
+  {
+    return {nullptr, 0};
+  }
+  auto props = wrappedViewModel->instance()->properties();
+  return generateViewModelPropertyDataArray(props);
 }
 
 EXPORT void deleteViewModelPropertyDataArray(ViewModelPropertyDataArray arr)
 {
-    for (int i = 0; i < arr.length; i++)
-    {
-        free((void*)arr.data[i].name);
-    }
-    free(arr.data);
+  for (int i = 0; i < arr.length; i++)
+  {
+    free((void*)arr.data[i].name);
+  }
+  free(arr.data);
 }
 
 struct DataEnumFFI
 {
-    const char* name;
-    const char** values;
-    int length;
+  const char* name;
+  const char** values;
+  int length;
 };
 struct DataEnumArray
 {
-    DataEnumFFI* data;
-    int length;
+  DataEnumFFI* data;
+  int length;
 };
 
 EXPORT DataEnumArray fileEnums(File* file)
 {
-    if (file == nullptr)
-    {
-        return {nullptr, 0};
-    }
-    auto enums = file->enums();
-    DataEnumFFI* out = (DataEnumFFI*)malloc(sizeof(DataEnumFFI) * enums.size());
+  if (file == nullptr)
+  {
+    return {nullptr, 0};
+  }
+  auto enums = file->enums();
+  DataEnumFFI* out = (DataEnumFFI*)malloc(sizeof(DataEnumFFI) * enums.size());
 
-    for (size_t i = 0; i < enums.size(); ++i)
+  for (size_t i = 0; i < enums.size(); ++i)
+  {
+    auto dataEnum = enums[i];
+    auto valueSize = dataEnum->values().size();
+    const char** c_values = new const char*[valueSize];
+    for (size_t j = 0; j < valueSize; ++j)
     {
-        auto dataEnum = enums[i];
-        auto valueSize = dataEnum->values().size();
-        const char** c_values = new const char*[valueSize];
-        for (size_t j = 0; j < valueSize; ++j)
-        {
-            auto value = dataEnum->values()[j];
-            c_values[j] = value->key().c_str();
-        }
-        out[i].name = dataEnum->enumName().c_str();
-        out[i].values = c_values;
-        out[i].length = static_cast<int>(valueSize);
+      auto value = dataEnum->values()[j];
+      c_values[j] = value->key().c_str();
     }
-    return {out, static_cast<int>(enums.size())};
+    out[i].name = dataEnum->enumName().c_str();
+    out[i].values = c_values;
+    out[i].length = static_cast<int>(valueSize);
+  }
+  return {out, static_cast<int>(enums.size())};
 }
 
 EXPORT void deleteDataEnumArray(DataEnumArray enums)
 {
-    if (enums.data == nullptr)
-    {
-        return;
-    }
+  if (enums.data == nullptr)
+  {
+    return;
+  }
 
-    for (int i = 0; i < enums.length; ++i)
-    {
-        delete[] enums.data[i].values;
-    }
-    free(enums.data);
+  for (int i = 0; i < enums.length; ++i)
+  {
+    delete[] enums.data[i].values;
+  }
+  free(enums.data);
 }
 #endif
 
@@ -1470,447 +1606,457 @@ EXPORT WrappedVMIRuntime* createVMIRuntimeFromIndex(
     WrappedViewModelRuntime* wrappedViewModel,
     size_t index)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = wrappedViewModel->viewModel()->createInstanceFromIndex(index);
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(vmi);
+  if (wrappedViewModel == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = wrappedViewModel->viewModel()->createInstanceFromIndex(index);
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(vmi);
 }
 
 EXPORT WrappedVMIRuntime* createVMIRuntimeFromName(
     WrappedViewModelRuntime* wrappedViewModel,
     const char* name)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = wrappedViewModel->viewModel()->createInstanceFromName(name);
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(vmi);
+  if (wrappedViewModel == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = wrappedViewModel->viewModel()->createInstanceFromName(name);
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(vmi);
 }
 
 EXPORT WrappedVMIRuntime* createDefaultVMIRuntime(
     WrappedViewModelRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = wrappedViewModel->viewModel()->createDefaultInstance();
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(vmi);
+  if (wrappedViewModel == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = wrappedViewModel->viewModel()->createDefaultInstance();
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(vmi);
 }
 
 EXPORT WrappedVMIRuntime* createVMIRuntime(
     WrappedViewModelRuntime* wrappedViewModel)
 {
-    if (wrappedViewModel == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = wrappedViewModel->viewModel()->createInstance();
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(vmi);
+  if (wrappedViewModel == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = wrappedViewModel->viewModel()->createInstance();
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(vmi);
 }
 
 EXPORT WrappedVMIRuntime* vmiRuntimeGetViewModelProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmi = viewModelInstance->propertyViewModel(path);
-    if (vmi == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(vmi);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto vmi = viewModelInstance->propertyViewModel(path);
+  if (vmi == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(vmi);
 }
 
 EXPORT WrappedVMINumberRuntime* vmiRuntimeGetNumberProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto numberProperty = viewModelInstance->propertyNumber(path);
-    if (numberProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMINumberRuntime(ref_rcp(wrappedViewModelInstance),
-                                       numberProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto numberProperty = viewModelInstance->propertyNumber(path);
+  if (numberProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMINumberRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      numberProperty);
 }
 
 EXPORT float getVMINumberRuntimeValue(
     WrappedVMINumberRuntime* wrappedNumberProperty)
 {
-    if (wrappedNumberProperty == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedNumberProperty->instance()->value();
+  if (wrappedNumberProperty == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedNumberProperty->instance()->value();
 }
 
 EXPORT void setVMINumberRuntimeValue(
     WrappedVMINumberRuntime* wrappedNumberProperty,
     float value)
 {
-    if (wrappedNumberProperty == nullptr)
-    {
-        return;
-    }
-    wrappedNumberProperty->instance()->value(value);
+  if (wrappedNumberProperty == nullptr)
+  {
+    return;
+  }
+  wrappedNumberProperty->instance()->value(value);
 }
 
 EXPORT WrappedVMIStringRuntime* vmiRuntimeGetStringProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto stringProperty = viewModelInstance->propertyString(path);
-    if (stringProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIStringRuntime(ref_rcp(wrappedViewModelInstance),
-                                       stringProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto stringProperty = viewModelInstance->propertyString(path);
+  if (stringProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIStringRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      stringProperty);
 }
 
 EXPORT const char* getVMIStringRuntimeValue(
     WrappedVMIStringRuntime* wrappedStringProperty)
 {
-    if (wrappedStringProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedStringProperty->instance()->value().c_str();
+  if (wrappedStringProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedStringProperty->instance()->value().c_str();
 }
 
 EXPORT void setVMIStringRuntimeValue(
     WrappedVMIStringRuntime* wrappedStringProperty,
     const char* value)
 {
-    if (wrappedStringProperty == nullptr)
-    {
-        return;
-    }
-    wrappedStringProperty->instance()->value(value);
+  if (wrappedStringProperty == nullptr)
+  {
+    return;
+  }
+  wrappedStringProperty->instance()->value(value);
 }
 
 EXPORT WrappedVMIBooleanRuntime* vmiRuntimeGetBooleanProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto booleanProperty = viewModelInstance->propertyBoolean(path);
-    if (booleanProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIBooleanRuntime(ref_rcp(wrappedViewModelInstance),
-                                        booleanProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto booleanProperty = viewModelInstance->propertyBoolean(path);
+  if (booleanProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIBooleanRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      booleanProperty);
 }
 
 EXPORT bool getVMIBooleanRuntimeValue(
     WrappedVMIBooleanRuntime* wrappedBooleanProperty)
 {
-    if (wrappedBooleanProperty == nullptr)
-    {
-        return false;
-    }
-    return wrappedBooleanProperty->instance()->value();
+  if (wrappedBooleanProperty == nullptr)
+  {
+    return false;
+  }
+  return wrappedBooleanProperty->instance()->value();
 }
 
 EXPORT void setVMIBooleanRuntimeValue(
     WrappedVMIBooleanRuntime* wrappedBooleanProperty,
     bool value)
 {
-    if (wrappedBooleanProperty == nullptr)
-    {
-        return;
-    }
-    wrappedBooleanProperty->instance()->value(value);
+  if (wrappedBooleanProperty == nullptr)
+  {
+    return;
+  }
+  wrappedBooleanProperty->instance()->value(value);
 }
 
 EXPORT WrappedVMIColorRuntime* vmiRuntimeGetColorProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto colorProperty = viewModelInstance->propertyColor(path);
-    if (colorProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIColorRuntime(ref_rcp(wrappedViewModelInstance),
-                                      colorProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto colorProperty = viewModelInstance->propertyColor(path);
+  if (colorProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIColorRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      colorProperty);
 }
 
 EXPORT int getVMIColorRuntimeValue(WrappedVMIColorRuntime* wrappedColorProperty)
 {
-    if (wrappedColorProperty == nullptr)
-    {
-        return 0x000000FF;
-    }
-    return wrappedColorProperty->instance()->value();
+  if (wrappedColorProperty == nullptr)
+  {
+    return 0x000000FF;
+  }
+  return wrappedColorProperty->instance()->value();
 }
 
 EXPORT void setVMIColorRuntimeValue(
     WrappedVMIColorRuntime* wrappedColorProperty,
     int value)
 {
-    if (wrappedColorProperty == nullptr)
-    {
-        return;
-    }
-    wrappedColorProperty->instance()->value(value);
+  if (wrappedColorProperty == nullptr)
+  {
+    return;
+  }
+  wrappedColorProperty->instance()->value(value);
 }
 
 EXPORT WrappedVMIEnumRuntime* vmiRuntimeGetEnumProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto enumProperty = viewModelInstance->propertyEnum(path);
-    if (enumProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIEnumRuntime(ref_rcp(wrappedViewModelInstance),
-                                     enumProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto enumProperty = viewModelInstance->propertyEnum(path);
+  if (enumProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIEnumRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      enumProperty);
 }
 
 EXPORT const char* getVMIEnumRuntimeValue(
     WrappedVMIEnumRuntime* wrappedEnumProperty)
 {
-    if (wrappedEnumProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return toCString(wrappedEnumProperty->instance()->value());
+  if (wrappedEnumProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return toCString(wrappedEnumProperty->instance()->value());
 }
 
-EXPORT void setVMIEnumRuntimeValue(WrappedVMIEnumRuntime* wrappedEnumProperty,
-                                   const char* value)
+EXPORT void setVMIEnumRuntimeValue(
+    WrappedVMIEnumRuntime* wrappedEnumProperty,
+    const char* value)
 {
-    if (wrappedEnumProperty == nullptr)
-    {
-        return;
-    }
-    wrappedEnumProperty->instance()->value(value);
+  if (wrappedEnumProperty == nullptr)
+  {
+    return;
+  }
+  wrappedEnumProperty->instance()->value(value);
 }
 
 EXPORT const char* getVMIEnumRuntimeEnumType(
     WrappedVMIEnumRuntime* wrappedEnumProperty)
 {
-    if (wrappedEnumProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return toCString(wrappedEnumProperty->instance()->enumType());
+  if (wrappedEnumProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return toCString(wrappedEnumProperty->instance()->enumType());
 }
 
 EXPORT WrappedVMITriggerRuntime* vmiRuntimeGetTriggerProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto triggerProperty = viewModelInstance->propertyTrigger(path);
-    if (triggerProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMITriggerRuntime(ref_rcp(wrappedViewModelInstance),
-                                        triggerProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto triggerProperty = viewModelInstance->propertyTrigger(path);
+  if (triggerProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMITriggerRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      triggerProperty);
 }
 
 EXPORT void triggerVMITriggerRuntime(
     WrappedVMITriggerRuntime* wrappedTriggerProp)
 {
-    if (wrappedTriggerProp == nullptr)
-    {
-        return;
-    }
-    return wrappedTriggerProp->instance()->trigger();
+  if (wrappedTriggerProp == nullptr)
+  {
+    return;
+  }
+  return wrappedTriggerProp->instance()->trigger();
 }
 
 EXPORT WrappedVMIAssetImageRuntime* vmiRuntimeGetAssetImageProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto imageProperty = viewModelInstance->propertyImage(path);
-    if (imageProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIAssetImageRuntime(ref_rcp(wrappedViewModelInstance),
-                                           imageProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto imageProperty = viewModelInstance->propertyImage(path);
+  if (imageProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIAssetImageRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      imageProperty);
 }
 
 EXPORT void setVMIAssetImageRuntimeValue(
     WrappedVMIAssetImageRuntime* wrappedAssetImageProperty,
     RenderImage* value)
 {
-    if (wrappedAssetImageProperty == nullptr)
-    {
-        return;
-    }
-    wrappedAssetImageProperty->instance()->value(value);
+  if (wrappedAssetImageProperty == nullptr)
+  {
+    return;
+  }
+  wrappedAssetImageProperty->instance()->value(value);
 }
 
 EXPORT WrappedVMIAssetFontRuntime* vmiRuntimeGetAssetFontProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto fontProperty = viewModelInstance->propertyFont(path);
-    if (fontProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIAssetFontRuntime(ref_rcp(wrappedViewModelInstance),
-                                          fontProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto fontProperty = viewModelInstance->propertyFont(path);
+  if (fontProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIAssetFontRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      fontProperty);
 }
 
 EXPORT void setVMIAssetFontRuntimeValue(
     WrappedVMIAssetFontRuntime* wrappedAssetFontProperty,
     Font* value)
 {
-    if (wrappedAssetFontProperty == nullptr)
-    {
-        return;
-    }
-    wrappedAssetFontProperty->instance()->value(value);
+  if (wrappedAssetFontProperty == nullptr)
+  {
+    return;
+  }
+  wrappedAssetFontProperty->instance()->value(value);
 }
 
 EXPORT WrappedVMIListRuntime* vmiRuntimeGetListProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto listProperty = viewModelInstance->propertyList(path);
-    if (listProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIListRuntime(ref_rcp(wrappedViewModelInstance),
-                                     listProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto listProperty = viewModelInstance->propertyList(path);
+  if (listProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIListRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      listProperty);
 }
 
 EXPORT size_t getVMIListRuntimeSize(WrappedVMIListRuntime* wrappedListProperty)
 {
-    if (wrappedListProperty == nullptr)
-    {
-        return 0;
-    }
-    return wrappedListProperty->instance()->size();
+  if (wrappedListProperty == nullptr)
+  {
+    return 0;
+  }
+  return wrappedListProperty->instance()->size();
 }
 
 EXPORT void vmiListRuntimeAddInstance(
     WrappedVMIListRuntime* wrappedListProperty,
     WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedListProperty == nullptr || wrappedViewModelInstance == nullptr)
-    {
-        return;
-    }
-    wrappedListProperty->instance()->addInstance(
-        wrappedViewModelInstance->instance());
+  if (wrappedListProperty == nullptr || wrappedViewModelInstance == nullptr)
+  {
+    return;
+  }
+  wrappedListProperty->instance()->addInstance(
+      wrappedViewModelInstance->instance());
 }
 
 EXPORT bool vmiListRuntimeAddInstanceAt(
@@ -1918,105 +2064,107 @@ EXPORT bool vmiListRuntimeAddInstanceAt(
     WrappedVMIRuntime* wrappedViewModelInstance,
     int index)
 {
-    if (wrappedListProperty == nullptr || wrappedViewModelInstance == nullptr)
-    {
-        return false;
-    }
-    return wrappedListProperty->instance()->addInstanceAt(
-        wrappedViewModelInstance->instance(),
-        index);
+  if (wrappedListProperty == nullptr || wrappedViewModelInstance == nullptr)
+  {
+    return false;
+  }
+  return wrappedListProperty->instance()->addInstanceAt(
+      wrappedViewModelInstance->instance(),
+      index);
 }
 
 EXPORT void vmiListRuntimeRemoveInstance(
     WrappedVMIListRuntime* wrappedListProperty,
     WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedListProperty == nullptr || wrappedViewModelInstance == nullptr)
-    {
-        return;
-    }
-    wrappedListProperty->instance()->removeInstance(
-        wrappedViewModelInstance->instance());
+  if (wrappedListProperty == nullptr || wrappedViewModelInstance == nullptr)
+  {
+    return;
+  }
+  wrappedListProperty->instance()->removeInstance(
+      wrappedViewModelInstance->instance());
 }
 
 EXPORT void vmiListRuntimeRemoveInstanceAt(
     WrappedVMIListRuntime* wrappedListProperty,
     int index)
 {
-    if (wrappedListProperty == nullptr)
-    {
-        return;
-    }
-    wrappedListProperty->instance()->removeInstanceAt(index);
+  if (wrappedListProperty == nullptr)
+  {
+    return;
+  }
+  wrappedListProperty->instance()->removeInstanceAt(index);
 }
 
 EXPORT WrappedVMIRuntime* vmiListRuntimeInstanceAt(
     WrappedVMIListRuntime* wrappedListProperty,
     int index)
 {
-    if (wrappedListProperty == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedListProperty->instance()->instanceAt(index);
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(viewModelInstance);
+  if (wrappedListProperty == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedListProperty->instance()->instanceAt(index);
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(viewModelInstance);
 }
 
-EXPORT void vmiListRuntimeSwap(WrappedVMIListRuntime* wrappedListProperty,
-                               uint32_t a,
-                               uint32_t b)
+EXPORT void vmiListRuntimeSwap(
+    WrappedVMIListRuntime* wrappedListProperty,
+    uint32_t a,
+    uint32_t b)
 {
-    if (wrappedListProperty == nullptr)
-    {
-        return;
-    }
-    wrappedListProperty->instance()->swap(a, b);
+  if (wrappedListProperty == nullptr)
+  {
+    return;
+  }
+  wrappedListProperty->instance()->swap(a, b);
 }
 
 EXPORT bool vmiValueRuntimeHasChanged(
     WrappedVMIValueRuntime<ViewModelInstanceValueRuntime>* wrappedValue)
 {
-    if (wrappedValue == nullptr)
-    {
-        return false;
-    }
-    return wrappedValue->instance()->hasChanged();
+  if (wrappedValue == nullptr)
+  {
+    return false;
+  }
+  return wrappedValue->instance()->hasChanged();
 }
 
 EXPORT void vmiValueRuntimeClearChanges(
     WrappedVMIValueRuntime<ViewModelInstanceValueRuntime>* wrappedValue)
 {
-    if (wrappedValue == nullptr)
-    {
-        return;
-    }
-    return wrappedValue->instance()->clearChanges();
+  if (wrappedValue == nullptr)
+  {
+    return;
+  }
+  return wrappedValue->instance()->clearChanges();
 }
 
 EXPORT WrappedVMIArtboardRuntime* vmiRuntimeGetArtboardProperty(
     WrappedVMIRuntime* wrappedViewModelInstance,
     const char* path)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto artboardProperty = viewModelInstance->propertyArtboard(path);
-    if (artboardProperty == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIArtboardRuntime(ref_rcp(wrappedViewModelInstance),
-                                         artboardProperty);
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto artboardProperty = viewModelInstance->propertyArtboard(path);
+  if (artboardProperty == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIArtboardRuntime(
+      ref_rcp(wrappedViewModelInstance),
+      artboardProperty);
 }
 
 EXPORT void setVMIArtboardRuntimeValue(
@@ -2024,38 +2172,38 @@ EXPORT void setVMIArtboardRuntimeValue(
     WrappedBindableArtboard* wrappedBindableArtboard,
     WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedArtboardProperty == nullptr ||
-        wrappedBindableArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboardProperty->instance()->value(
-        wrappedBindableArtboard->artboard());
-    wrappedArtboardProperty->instance()->viewModelInstance(
-        wrappedViewModelInstance
-            ? wrappedViewModelInstance->instance()->instance()
-            : nullptr);
+  if (wrappedArtboardProperty == nullptr || wrappedBindableArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboardProperty->instance()->value(
+      wrappedBindableArtboard->artboard());
+  wrappedArtboardProperty->instance()->viewModelInstance(
+      wrappedViewModelInstance
+          ? wrappedViewModelInstance->instance()->instance()
+          : nullptr);
 }
 
-EXPORT void artboardSetVMIRuntime(WrappedArtboard* wrappedArtboard,
-                                  WrappedVMIRuntime* wrappedViewModelInstance)
+EXPORT void artboardSetVMIRuntime(
+    WrappedArtboard* wrappedArtboard,
+    WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (wrappedArtboard == nullptr || viewModelInstance == nullptr)
-    {
-        return;
-    }
-    if (viewModelInstance->instance() == nullptr)
-    {
-        return;
-    }
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (wrappedArtboard == nullptr || viewModelInstance == nullptr)
+  {
+    return;
+  }
+  if (viewModelInstance->instance() == nullptr)
+  {
+    return;
+  }
 
-    wrappedArtboard->artboard()->bindViewModelInstance(
-        viewModelInstance->instance());
+  wrappedArtboard->artboard()->bindViewModelInstance(
+      viewModelInstance->instance());
 }
 
 // Stages the main view model instance without rebinding; apply with
@@ -2064,18 +2212,17 @@ EXPORT void stateMachineSetMainVMIRuntime(
     WrappedStateMachine* wrappedMachine,
     WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedMachine == nullptr || wrappedViewModelInstance == nullptr)
-    {
-        return;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr ||
-        viewModelInstance->instance() == nullptr)
-    {
-        return;
-    }
-    wrappedMachine->stateMachine()->setViewModelInstance(
-        viewModelInstance->instance());
+  if (wrappedMachine == nullptr || wrappedViewModelInstance == nullptr)
+  {
+    return;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr || viewModelInstance->instance() == nullptr)
+  {
+    return;
+  }
+  wrappedMachine->stateMachine()->setViewModelInstance(
+      viewModelInstance->instance());
 }
 
 // Stages the named global slot without rebinding; apply with stateMachineBind.
@@ -2085,31 +2232,30 @@ EXPORT bool stateMachineSetGlobalVMIRuntime(
     const char* name,
     WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedMachine == nullptr || name == nullptr ||
-        wrappedViewModelInstance == nullptr)
-    {
-        return false;
-    }
-    auto viewModelInstance = wrappedViewModelInstance->instance();
-    if (viewModelInstance == nullptr ||
-        viewModelInstance->instance() == nullptr)
-    {
-        return false;
-    }
-    return wrappedMachine->stateMachine()->setGlobalViewModelInstance(
-        name,
-        viewModelInstance->instance());
+  if (wrappedMachine == nullptr || name == nullptr ||
+      wrappedViewModelInstance == nullptr)
+  {
+    return false;
+  }
+  auto viewModelInstance = wrappedViewModelInstance->instance();
+  if (viewModelInstance == nullptr || viewModelInstance->instance() == nullptr)
+  {
+    return false;
+  }
+  return wrappedMachine->stateMachine()->setGlobalViewModelInstance(
+      name,
+      viewModelInstance->instance());
 }
 
 // Applies the staged data context in one full rebind, creating default
 // instances for the main and any global slots not explicitly set.
 EXPORT void stateMachineBind(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return;
-    }
-    wrappedMachine->stateMachine()->bind();
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
+  wrappedMachine->stateMachine()->bind();
 }
 
 // Slot lookups shared by the wrapper-minting exports and the identity probes.
@@ -2117,36 +2263,36 @@ static rcp<ViewModelInstance> stateMachineGlobalSlotInstance(
     WrappedStateMachine* wrappedMachine,
     const char* name)
 {
-    if (wrappedMachine == nullptr || name == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedMachine->stateMachine()->globalViewModelInstance(name);
+  if (wrappedMachine == nullptr || name == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedMachine->stateMachine()->globalViewModelInstance(name);
 }
 
 static rcp<ViewModelInstance> stateMachineMainSlotInstance(
     WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return nullptr;
-    }
-    auto dataContext = wrappedMachine->stateMachine()->dataContext();
-    if (dataContext == nullptr)
-    {
-        return nullptr;
-    }
-    return dataContext->mainViewModelInstance();
+  if (wrappedMachine == nullptr)
+  {
+    return nullptr;
+  }
+  auto dataContext = wrappedMachine->stateMachine()->dataContext();
+  if (dataContext == nullptr)
+  {
+    return nullptr;
+  }
+  return dataContext->mainViewModelInstance();
 }
 
 static WrappedVMIRuntime* wrapInstance(rcp<ViewModelInstance> instance)
 {
-    if (instance == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedVMIRuntime(
-        make_rcp<ViewModelInstanceRuntime>(std::move(instance)));
+  if (instance == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedVMIRuntime(
+      make_rcp<ViewModelInstanceRuntime>(std::move(instance)));
 }
 
 // Pure read of the named global slot; never creates. Returns a new wrapper
@@ -2155,7 +2301,7 @@ EXPORT WrappedVMIRuntime* stateMachineGlobalVMIRuntime(
     WrappedStateMachine* wrappedMachine,
     const char* name)
 {
-    return wrapInstance(stateMachineGlobalSlotInstance(wrappedMachine, name));
+  return wrapInstance(stateMachineGlobalSlotInstance(wrappedMachine, name));
 }
 
 // Pure read of the main (non-global) instance on the data context; never
@@ -2164,7 +2310,7 @@ EXPORT WrappedVMIRuntime* stateMachineGlobalVMIRuntime(
 EXPORT WrappedVMIRuntime* stateMachineMainVMIRuntime(
     WrappedStateMachine* wrappedMachine)
 {
-    return wrapInstance(stateMachineMainSlotInstance(wrappedMachine));
+  return wrapInstance(stateMachineMainSlotInstance(wrappedMachine));
 }
 
 // Identity probes: the underlying core instance occupying a slot, as an
@@ -2172,14 +2318,14 @@ EXPORT WrappedVMIRuntime* stateMachineMainVMIRuntime(
 EXPORT const void* stateMachineMainVMINativeInstance(
     WrappedStateMachine* wrappedMachine)
 {
-    return stateMachineMainSlotInstance(wrappedMachine).get();
+  return stateMachineMainSlotInstance(wrappedMachine).get();
 }
 
 EXPORT const void* stateMachineGlobalVMINativeInstance(
     WrappedStateMachine* wrappedMachine,
     const char* name)
 {
-    return stateMachineGlobalSlotInstance(wrappedMachine, name).get();
+  return stateMachineGlobalSlotInstance(wrappedMachine, name).get();
 }
 
 // Identity probe: the underlying core instance behind a wrapper, as an opaque
@@ -2187,117 +2333,120 @@ EXPORT const void* stateMachineGlobalVMINativeInstance(
 EXPORT const void* vmiRuntimeNativeInstance(
     WrappedVMIRuntime* wrappedViewModelInstance)
 {
-    if (wrappedViewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    auto runtime = wrappedViewModelInstance->instance();
-    if (runtime == nullptr)
-    {
-        return nullptr;
-    }
-    return runtime->instance().get();
+  if (wrappedViewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  auto runtime = wrappedViewModelInstance->instance();
+  if (runtime == nullptr)
+  {
+    return nullptr;
+  }
+  return runtime->instance().get();
 }
 
 EXPORT void deleteVMIValueRuntime(
     WrappedVMIValueRuntime<ViewModelInstanceValueRuntime>* wrappedValue)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete wrappedValue;
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete wrappedValue;
 }
 
 EXPORT void deleteVMIRuntime(WrappedVMIRuntime* wrappedVMIRuntime)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    wrappedVMIRuntime->unref();
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  wrappedVMIRuntime->unref();
 }
 
 EXPORT void deleteViewModelRuntime(
     WrappedViewModelRuntime* wrappedViewModelRuntime)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete wrappedViewModelRuntime;
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete wrappedViewModelRuntime;
 }
 
 #pragma endregion
 
-EXPORT DataContext* riveDataContext(File* file,
-                                    SizeType index,
-                                    SizeType indexInstance)
+EXPORT DataContext* riveDataContext(
+    File* file,
+    SizeType index,
+    SizeType indexInstance)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    auto instance = file->createViewModelInstance(index, indexInstance);
-    if (instance == nullptr)
-    {
-        return nullptr;
-    }
-    auto dataContext = new DataContext(instance);
-    return dataContext;
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  auto instance = file->createViewModelInstance(index, indexInstance);
+  if (instance == nullptr)
+  {
+    return nullptr;
+  }
+  auto dataContext = new DataContext(instance);
+  return dataContext;
 }
 
 EXPORT void deleteDataContext(DataContext* dataContext)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    dataContext->unref();
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  dataContext->unref();
 }
 
-EXPORT DataContext* riveDataContextFromInstances(File* file,
-                                                 SizeType* viewModelIndices,
-                                                 SizeType* instanceIndices,
-                                                 SizeType count)
+EXPORT DataContext* riveDataContextFromInstances(
+    File* file,
+    SizeType* viewModelIndices,
+    SizeType* instanceIndices,
+    SizeType count)
 {
-    if (file == nullptr || count == 0)
+  if (file == nullptr || count == 0)
+  {
+    return nullptr;
+  }
+  std::vector<rcp<ViewModelInstance>> instances;
+  instances.reserve(count);
+  for (SizeType i = 0; i < count; i++)
+  {
+    auto instance = file->createViewModelInstance(
+        viewModelIndices[i],
+        instanceIndices[i]);
+    if (instance != nullptr)
     {
-        return nullptr;
+      instances.push_back(std::move(instance));
     }
-    std::vector<rcp<ViewModelInstance>> instances;
-    instances.reserve(count);
-    for (SizeType i = 0; i < count; i++)
-    {
-        auto instance = file->createViewModelInstance(viewModelIndices[i],
-                                                      instanceIndices[i]);
-        if (instance != nullptr)
-        {
-            instances.push_back(std::move(instance));
-        }
-    }
-    if (instances.empty())
-    {
-        return nullptr;
-    }
-    auto dataContext = new DataContext(std::move(instances));
-    return dataContext;
+  }
+  if (instances.empty())
+  {
+    return nullptr;
+  }
+  auto dataContext = new DataContext(std::move(instances));
+  return dataContext;
 }
 
 EXPORT ViewModelInstance* riveDataContextViewModelInstance(
     DataContext* dataContext)
 {
-    if (dataContext == nullptr)
-    {
-        return nullptr;
-    }
-    rcp<ViewModelInstance> vmi = dataContext->mainViewModelInstance();
-    return vmi.release();
+  if (dataContext == nullptr)
+  {
+    return nullptr;
+  }
+  rcp<ViewModelInstance> vmi = dataContext->mainViewModelInstance();
+  return vmi.release();
 }
 
 EXPORT ViewModelInstance* dataContextViewModelInstanceAt(
     DataContext* dataContext,
     SizeType index)
 {
-    if (dataContext == nullptr)
-    {
-        return nullptr;
-    }
-    auto& instances = dataContext->viewModelInstances();
-    if (index >= instances.size())
-    {
-        return nullptr;
-    }
-    rcp<ViewModelInstance> vmi = instances[index];
-    return vmi.release();
+  if (dataContext == nullptr)
+  {
+    return nullptr;
+  }
+  auto& instances = dataContext->viewModelInstances();
+  if (index >= instances.size())
+  {
+    return nullptr;
+  }
+  rcp<ViewModelInstance> vmi = instances[index];
+  return vmi.release();
 }
 
 // Creates a DataContext from existing native ViewModelInstance pointers.
@@ -2308,52 +2457,54 @@ EXPORT DataContext* dataContextFromViewModelInstancePointers(
     SizeType count,
     DataContext* parentDataContext)
 {
-    if (instances == nullptr || count == 0)
+  if (instances == nullptr || count == 0)
+  {
+    return nullptr;
+  }
+  std::vector<rcp<ViewModelInstance>> vec;
+  vec.reserve(count);
+  for (SizeType i = 0; i < count; i++)
+  {
+    if (instances[i] != nullptr)
     {
-        return nullptr;
+      vec.push_back(ref_rcp(instances[i]));
     }
-    std::vector<rcp<ViewModelInstance>> vec;
-    vec.reserve(count);
-    for (SizeType i = 0; i < count; i++)
-    {
-        if (instances[i] != nullptr)
-        {
-            vec.push_back(ref_rcp(instances[i]));
-        }
-    }
-    if (vec.empty())
-    {
-        return nullptr;
-    }
-    auto dataContext = new DataContext(std::move(vec));
-    if (parentDataContext != nullptr)
-    {
-        dataContext->parent(ref_rcp(parentDataContext));
-    }
-    return dataContext;
+  }
+  if (vec.empty())
+  {
+    return nullptr;
+  }
+  auto dataContext = new DataContext(std::move(vec));
+  if (parentDataContext != nullptr)
+  {
+    dataContext->parent(ref_rcp(parentDataContext));
+  }
+  return dataContext;
 }
 
-EXPORT ViewModelInstance* copyViewModelInstance(File* file,
-                                                SizeType index,
-                                                SizeType indexInstance)
+EXPORT ViewModelInstance* copyViewModelInstance(
+    File* file,
+    SizeType index,
+    SizeType indexInstance)
 {
-    if (file == nullptr)
-    {
-        return nullptr;
-    }
-    rcp<ViewModelInstance> instance =
-        file->createViewModelInstance(index, indexInstance);
-    // no need to ref as we got a full (non ref& rcp)
-    return instance.release();
+  if (file == nullptr)
+  {
+    return nullptr;
+  }
+  rcp<ViewModelInstance> instance = file->createViewModelInstance(
+      index,
+      indexInstance);
+  // no need to ref as we got a full (non ref& rcp)
+  return instance.release();
 }
 
 EXPORT void createViewModelInstance(File* file, std::string viewModelName)
 {
-    if (file == nullptr)
-    {
-        return;
-    }
-    file->createViewModelInstance(viewModelName);
+  if (file == nullptr)
+  {
+    return;
+  }
+  file->createViewModelInstance(viewModelName);
 }
 
 EXPORT void artboardDataContextFromInstance(
@@ -2362,89 +2513,91 @@ EXPORT void artboardDataContextFromInstance(
     DataContext* dataContext,
     bool isRoot)
 {
-    if (wrappedArtboard == nullptr || viewModelInstance == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr || viewModelInstance == nullptr)
+  {
+    return;
+  }
 
-    wrappedArtboard->artboard()->bindViewModelInstance(
-        ref_rcp(viewModelInstance),
-        ref_rcp(dataContext));
+  wrappedArtboard->artboard()->bindViewModelInstance(
+      ref_rcp(viewModelInstance),
+      ref_rcp(dataContext));
 }
 
 EXPORT void artboardUpdateDataBinds(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 
-    wrappedArtboard->artboard()->updateDataBinds();
+  wrappedArtboard->artboard()->updateDataBinds();
 }
 
 EXPORT DataContext* artboardDataContext(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto dataContext = wrappedArtboard->artboard()->dataContext();
-    if (dataContext == nullptr)
-    {
-        return nullptr;
-    }
-    dataContext->ref();
-    return dataContext.get();
+  if (wrappedArtboard == nullptr)
+  {
+    return nullptr;
+  }
+  auto dataContext = wrappedArtboard->artboard()->dataContext();
+  if (dataContext == nullptr)
+  {
+    return nullptr;
+  }
+  dataContext->ref();
+  return dataContext.get();
 }
 
-EXPORT void artboardInternalDataContext(WrappedArtboard* wrappedArtboard,
-                                        DataContext* dataContext)
+EXPORT void artboardInternalDataContext(
+    WrappedArtboard* wrappedArtboard,
+    DataContext* dataContext)
 {
-    if (wrappedArtboard == nullptr || dataContext == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->internalDataContext(ref_rcp(dataContext));
+  if (wrappedArtboard == nullptr || dataContext == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->internalDataContext(ref_rcp(dataContext));
 }
 
 EXPORT void artboardClearDataContext(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->clearDataContext();
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->clearDataContext();
 }
 
 EXPORT void artboardUnbind(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->unbind();
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->unbind();
 }
 
 EXPORT void stateMachineDataContextFromInstance(
     WrappedStateMachine* wrappedMachine,
     ViewModelInstance* viewModelInstance)
 {
-    if (wrappedMachine == nullptr || viewModelInstance == nullptr)
-    {
-        return;
-    }
-    wrappedMachine->stateMachine()->bindViewModelInstance(
-        ref_rcp(viewModelInstance));
+  if (wrappedMachine == nullptr || viewModelInstance == nullptr)
+  {
+    return;
+  }
+  wrappedMachine->stateMachine()->bindViewModelInstance(
+      ref_rcp(viewModelInstance));
 }
 
-EXPORT void stateMachineDataContext(WrappedStateMachine* wrappedMachine,
-                                    DataContext* dataContext)
+EXPORT void stateMachineDataContext(
+    WrappedStateMachine* wrappedMachine,
+    DataContext* dataContext)
 {
-    if (dataContext == nullptr)
-    {
-        return;
-    }
-    wrappedMachine->stateMachine()->dataContext(ref_rcp(dataContext));
+  if (dataContext == nullptr)
+  {
+    return;
+  }
+  wrappedMachine->stateMachine()->dataContext(ref_rcp(dataContext));
 }
 
 EXPORT ViewModelInstanceValue* viewModelInstancePropertyValue(
@@ -2453,63 +2606,63 @@ EXPORT ViewModelInstanceValue* viewModelInstancePropertyValue(
     const char* name,
     uint32_t propertyType)
 {
-    if (viewModelInstance == nullptr || name == nullptr)
-    {
-        return nullptr;
-    }
+  if (viewModelInstance == nullptr || name == nullptr)
+  {
+    return nullptr;
+  }
 
-    std::string nameStr(name);
-    auto propertyValues = viewModelInstance->propertyValues();
+  std::string nameStr(name);
+  auto propertyValues = viewModelInstance->propertyValues();
 
-    // Collect all property values whose name matches AND whose associated
-    // ViewModelProperty coreType matches the requested propertyType.
-    std::vector<std::pair<size_t, ViewModelInstanceValue*>> matches;
-    for (size_t i = 0; i < propertyValues.size(); i++)
+  // Collect all property values whose name matches AND whose associated
+  // ViewModelProperty coreType matches the requested propertyType.
+  std::vector<std::pair<size_t, ViewModelInstanceValue*>> matches;
+  for (size_t i = 0; i < propertyValues.size(); i++)
+  {
+    auto* value = propertyValues[i].get();
+    if (value == nullptr)
     {
-        auto* value = propertyValues[i].get();
-        if (value == nullptr)
-        {
-            continue;
-        }
-        auto* prop = value->viewModelProperty();
-        if (prop != nullptr && prop->constName() == nameStr)
-        {
-            // Enums are treated as a special case because they get converted
-            // during export
-            if (prop->coreType() == propertyType ||
-                (prop->coreType() == ViewModelPropertyEnumCustomBase::typeKey &&
-                 propertyType == ViewModelPropertyEnumBase::typeKey))
-                matches.push_back({i, value});
-        }
+      continue;
     }
+    auto* prop = value->viewModelProperty();
+    if (prop != nullptr && prop->constName() == nameStr)
+    {
+      // Enums are treated as a special case because they get converted
+      // during export
+      if (prop->coreType() == propertyType ||
+          (prop->coreType() == ViewModelPropertyEnumCustomBase::typeKey &&
+           propertyType == ViewModelPropertyEnumBase::typeKey))
+        matches.push_back({i, value});
+    }
+  }
 
-    ViewModelInstanceValue* result = nullptr;
-    if (matches.size() == 1)
+  ViewModelInstanceValue* result = nullptr;
+  if (matches.size() == 1)
+  {
+    result = matches[0].second;
+  }
+  else if (matches.size() > 1)
+  {
+    // Multiple matches — break the tie using the provided index.
+    result = matches[0].second;
+    for (auto& [idx, value] : matches)
     {
-        result = matches[0].second;
+      if (idx == index)
+      {
+        result = value;
+        break;
+      }
     }
-    else if (matches.size() > 1)
-    {
-        // Multiple matches — break the tie using the provided index.
-        result = matches[0].second;
-        for (auto& [idx, value] : matches)
-        {
-            if (idx == index)
-            {
-                result = value;
-                break;
-            }
-        }
-    }
+  }
 
-    if (result == nullptr)
-    {
-        return nullptr;
-    }
+  if (result == nullptr)
+  {
+    return nullptr;
+  }
 
-    // Make sure to increase ref count and release as propertyValue returns a
-    // bare pointer.
-    return ref_rcp(result).release();
+  // Make sure to increase ref count and release as propertyValue returns a
+  // bare pointer.
+  return ref_rcp(result).release();
 }
 
 // Prunes a view model instance down to only the property ids in keepIds,
@@ -2523,188 +2676,191 @@ EXPORT void pruneViewModelInstanceToProperties(
     const uint32_t* keepIds,
     SizeType keepCount)
 {
-    if (viewModelInstance == nullptr)
+  if (viewModelInstance == nullptr)
+  {
+    return;
+  }
+  std::unordered_set<uint32_t> keep;
+  for (SizeType i = 0; i < keepCount; i++)
+  {
+    keep.insert(keepIds[i]);
+  }
+  // Snapshot the ids to remove first; removeValue mutates m_PropertyValues.
+  std::vector<uint32_t> toRemove;
+  for (auto& value : viewModelInstance->propertyValues())
+  {
+    auto id = value->viewModelPropertyId();
+    if (keep.find(id) == keep.end())
     {
-        return;
+      toRemove.push_back(id);
     }
-    std::unordered_set<uint32_t> keep;
-    for (SizeType i = 0; i < keepCount; i++)
-    {
-        keep.insert(keepIds[i]);
-    }
-    // Snapshot the ids to remove first; removeValue mutates m_PropertyValues.
-    std::vector<uint32_t> toRemove;
-    for (auto& value : viewModelInstance->propertyValues())
-    {
-        auto id = value->viewModelPropertyId();
-        if (keep.find(id) == keep.end())
-        {
-            toRemove.push_back(id);
-        }
-    }
-    for (auto id : toRemove)
-    {
-        viewModelInstance->removeValue(id);
-    }
+  }
+  for (auto id : toRemove)
+  {
+    viewModelInstance->removeValue(id);
+  }
 }
 
 EXPORT void deleteViewModelInstance(ViewModelInstance* viewModelInstance)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    viewModelInstance->unref();
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  viewModelInstance->unref();
 }
 
 EXPORT void deleteViewModelInstanceValue(ViewModelInstanceValue* value)
 {
-    if (value == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    value->unref();
+  if (value == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  value->unref();
 }
 
 EXPORT ViewModelInstance* viewModelInstanceReferenceViewModel(
     ViewModelInstanceValue* viewModelInstanceValue)
 {
-    if (viewModelInstanceValue == nullptr)
-    {
-        return nullptr;
-    }
-    rcp<ViewModelInstance> viewModelInstance =
-        viewModelInstanceValue->as<ViewModelInstanceViewModel>()
-            ->referenceViewModelInstance();
-    return viewModelInstance.release();
+  if (viewModelInstanceValue == nullptr)
+  {
+    return nullptr;
+  }
+  rcp<ViewModelInstance>
+      viewModelInstance = viewModelInstanceValue
+                              ->as<ViewModelInstanceViewModel>()
+                              ->referenceViewModelInstance();
+  return viewModelInstance.release();
 }
 
 EXPORT ViewModelInstance* viewModelInstanceListItemViewModel(
     ViewModelInstanceValue* viewModelInstanceValue,
     SizeType index)
 {
-    if (viewModelInstanceValue == nullptr)
-    {
-        return nullptr;
-    }
-    auto vmList = viewModelInstanceValue->as<ViewModelInstanceList>();
-    if (vmList != nullptr && index < vmList->listItems().size())
-    {
-        auto vmListItem = vmList->item(index);
-        if (vmListItem != nullptr && vmListItem->viewModelInstance() != nullptr)
-        {
-            rcp<ViewModelInstance>& vmi = vmListItem->viewModelInstance();
-            return ref_rcp(vmi.get()).release();
-        }
-    }
+  if (viewModelInstanceValue == nullptr)
+  {
     return nullptr;
+  }
+  auto vmList = viewModelInstanceValue->as<ViewModelInstanceList>();
+  if (vmList != nullptr && index < vmList->listItems().size())
+  {
+    auto vmListItem = vmList->item(index);
+    if (vmListItem != nullptr && vmListItem->viewModelInstance() != nullptr)
+    {
+      rcp<ViewModelInstance>& vmi = vmListItem->viewModelInstance();
+      return ref_rcp(vmi.get()).release();
+    }
+  }
+  return nullptr;
 }
 
 EXPORT size_t
 viewModelInstanceListSize(ViewModelInstanceList* viewModelInstanceList)
 {
-    if (viewModelInstanceList == nullptr)
-    {
-        return 0;
-    }
-    return viewModelInstanceList->listItems().size();
+  if (viewModelInstanceList == nullptr)
+  {
+    return 0;
+  }
+  return viewModelInstanceList->listItems().size();
 }
 
 EXPORT void setViewModelInstanceNumberValue(
     ViewModelInstanceValue* viewModelInstanceValue,
     float value)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceNumber>())
-    {
-        return;
-    }
-    auto viewModelInstanceNumber =
-        viewModelInstanceValue->as<ViewModelInstanceNumber>();
-    viewModelInstanceNumber->propertyValue(value);
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceNumber>())
+  {
+    return;
+  }
+  auto viewModelInstanceNumber = viewModelInstanceValue
+                                     ->as<ViewModelInstanceNumber>();
+  viewModelInstanceNumber->propertyValue(value);
 }
 
-EXPORT void setViewModelInstanceTriggerValue(
+EXPORT void fireViewModelInstanceTrigger(
     ViewModelInstanceValue* viewModelInstanceValue,
-    uint32_t value)
+    uint32_t fires)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceTrigger>())
-    {
-        return;
-    }
-    auto viewModelInstanceTrigger =
-        viewModelInstanceValue->as<ViewModelInstanceTrigger>();
-    viewModelInstanceTrigger->propertyValue(value);
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceTrigger>())
+  {
+    return;
+  }
+  auto viewModelInstanceTrigger = viewModelInstanceValue
+                                      ->as<ViewModelInstanceTrigger>();
+  viewModelInstanceTrigger->propertyValue(
+      viewModelInstanceTrigger->propertyValue() + fires);
 }
 
 EXPORT void setViewModelInstanceEnumValue(
     ViewModelInstanceValue* viewModelInstanceValue,
     uint32_t value)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceEnum>())
-    {
-        return;
-    }
-    auto viewModelInstanceEnum =
-        viewModelInstanceValue->as<ViewModelInstanceEnum>();
-    viewModelInstanceEnum->propertyValue(value);
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceEnum>())
+  {
+    return;
+  }
+  auto viewModelInstanceEnum = viewModelInstanceValue
+                                   ->as<ViewModelInstanceEnum>();
+  viewModelInstanceEnum->propertyValue(value);
 }
 
 EXPORT void setViewModelInstanceAssetValue(
     ViewModelInstanceValue* viewModelInstanceValue,
     uint32_t value)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceAsset>())
-    {
-        return;
-    }
-    auto viewModelInstanceAsset =
-        viewModelInstanceValue->as<ViewModelInstanceAsset>();
-    viewModelInstanceAsset->propertyValue(value);
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceAsset>())
+  {
+    return;
+  }
+  auto viewModelInstanceAsset = viewModelInstanceValue
+                                    ->as<ViewModelInstanceAsset>();
+  viewModelInstanceAsset->propertyValue(value);
 }
 
-uint32_t assetImageResolveRuntimeIndex(File* file,
-                                       ViewModelInstanceAssetImage* vmi)
+uint32_t assetImageResolveRuntimeIndex(
+    File* file,
+    ViewModelInstanceAssetImage* vmi)
 {
-    if (file == nullptr || vmi == nullptr)
-    {
-        return std::numeric_limits<uint32_t>::max();
-    }
-    RenderImage* ri = vmi->asset()->renderImage();
-    if (ri == nullptr)
-    {
-        return std::numeric_limits<uint32_t>::max();
-    }
-    auto span = file->assets();
-    for (size_t i = 0; i < span.size(); ++i)
-    {
-        FileAsset* fa = span[i].get();
-        if (fa != nullptr && fa->is<ImageAsset>())
-        {
-            auto faImg = fa->as<ImageAsset>();
-            auto faRi = faImg->renderImage();
-            if (faRi == ri)
-            {
-                return static_cast<uint32_t>(i);
-            }
-        }
-    }
+  if (file == nullptr || vmi == nullptr)
+  {
     return std::numeric_limits<uint32_t>::max();
+  }
+  RenderImage* ri = vmi->asset()->renderImage();
+  if (ri == nullptr)
+  {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  auto span = file->assets();
+  for (size_t i = 0; i < span.size(); ++i)
+  {
+    FileAsset* fa = span[i].get();
+    if (fa != nullptr && fa->is<ImageAsset>())
+    {
+      auto faImg = fa->as<ImageAsset>();
+      auto faRi = faImg->renderImage();
+      if (faRi == ri)
+      {
+        return static_cast<uint32_t>(i);
+      }
+    }
+  }
+  return std::numeric_limits<uint32_t>::max();
 }
 
 EXPORT uint32_t viewModelInstanceAssetImageResolveRuntimeIndex(
     File* file,
     ViewModelInstanceValue* viewModelInstanceValue)
 {
-    if (file == nullptr || viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceAssetImage>())
-    {
-        return std::numeric_limits<uint32_t>::max();
-    }
-    return assetImageResolveRuntimeIndex(
-        file,
-        viewModelInstanceValue->as<ViewModelInstanceAssetImage>());
+  if (file == nullptr || viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceAssetImage>())
+  {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  return assetImageResolveRuntimeIndex(
+      file,
+      viewModelInstanceValue->as<ViewModelInstanceAssetImage>());
 }
 
 // Returns the RenderImage the runtime set directly on this image property (e.g.
@@ -2714,155 +2870,156 @@ EXPORT uint32_t viewModelInstanceAssetImageResolveRuntimeIndex(
 EXPORT RenderImage* viewModelInstanceAssetImageRenderImage(
     ViewModelInstanceValue* viewModelInstanceValue)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceAssetImage>())
-    {
-        return nullptr;
-    }
-    auto vmi = viewModelInstanceValue->as<ViewModelInstanceAssetImage>();
-    // Only a directly assigned image is ours to hand back, and the -1 sentinel
-    // is what marks one. Once the property points at a file asset by index the
-    // backing ImageAsset may still be holding the previous runtime image, and
-    // returning that would rematerialize the wrong ephemeral asset.
-    if (vmi->propertyValue() != static_cast<Id>(-1))
-    {
-        return nullptr;
-    }
-    RenderImage* ri = vmi->asset()->renderImage();
-    if (ri != nullptr)
-    {
-        ri->ref();
-    }
-    return ri;
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceAssetImage>())
+  {
+    return nullptr;
+  }
+  auto vmi = viewModelInstanceValue->as<ViewModelInstanceAssetImage>();
+  // Only a directly assigned image is ours to hand back, and the -1 sentinel
+  // is what marks one. Once the property points at a file asset by index the
+  // backing ImageAsset may still be holding the previous runtime image, and
+  // returning that would rematerialize the wrong ephemeral asset.
+  if (vmi->propertyValue() != static_cast<Id>(-1))
+  {
+    return nullptr;
+  }
+  RenderImage* ri = vmi->asset()->renderImage();
+  if (ri != nullptr)
+  {
+    ri->ref();
+  }
+  return ri;
 }
 
-uint32_t assetFontResolveRuntimeIndex(File* file,
-                                      ViewModelInstanceAssetFont* vmi)
+uint32_t assetFontResolveRuntimeIndex(
+    File* file,
+    ViewModelInstanceAssetFont* vmi)
 {
-    if (file == nullptr || vmi == nullptr)
-    {
-        return std::numeric_limits<uint32_t>::max();
-    }
-    Font* font = vmi->asset()->font().get();
-    if (font == nullptr)
-    {
-        return std::numeric_limits<uint32_t>::max();
-    }
-    auto span = file->assets();
-    for (size_t i = 0; i < span.size(); ++i)
-    {
-        FileAsset* fa = span[i].get();
-        if (fa != nullptr && fa->is<FontAsset>())
-        {
-            auto faFont = fa->as<FontAsset>();
-            if (faFont->font().get() == font)
-            {
-                return static_cast<uint32_t>(i);
-            }
-        }
-    }
+  if (file == nullptr || vmi == nullptr)
+  {
     return std::numeric_limits<uint32_t>::max();
+  }
+  Font* font = vmi->asset()->font().get();
+  if (font == nullptr)
+  {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  auto span = file->assets();
+  for (size_t i = 0; i < span.size(); ++i)
+  {
+    FileAsset* fa = span[i].get();
+    if (fa != nullptr && fa->is<FontAsset>())
+    {
+      auto faFont = fa->as<FontAsset>();
+      if (faFont->font().get() == font)
+      {
+        return static_cast<uint32_t>(i);
+      }
+    }
+  }
+  return std::numeric_limits<uint32_t>::max();
 }
 
 EXPORT uint32_t viewModelInstanceAssetFontResolveRuntimeIndex(
     File* file,
     ViewModelInstanceValue* viewModelInstanceValue)
 {
-    if (file == nullptr || viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceAssetFont>())
-    {
-        return std::numeric_limits<uint32_t>::max();
-    }
-    return assetFontResolveRuntimeIndex(
-        file,
-        viewModelInstanceValue->as<ViewModelInstanceAssetFont>());
+  if (file == nullptr || viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceAssetFont>())
+  {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  return assetFontResolveRuntimeIndex(
+      file,
+      viewModelInstanceValue->as<ViewModelInstanceAssetFont>());
 }
 
 EXPORT void setViewModelInstanceBooleanValue(
     ViewModelInstanceValue* viewModelInstanceValue,
     bool value)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceBoolean>())
-    {
-        return;
-    }
-    auto viewModelInstanceBoolean =
-        viewModelInstanceValue->as<ViewModelInstanceBoolean>();
-    viewModelInstanceBoolean->propertyValue(value);
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceBoolean>())
+  {
+    return;
+  }
+  auto viewModelInstanceBoolean = viewModelInstanceValue
+                                      ->as<ViewModelInstanceBoolean>();
+  viewModelInstanceBoolean->propertyValue(value);
 }
 
 EXPORT void setViewModelInstanceColorValue(
     ViewModelInstanceValue* viewModelInstanceValue,
     int value)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceColor>())
-    {
-        return;
-    }
-    auto viewModelInstanceColor =
-        viewModelInstanceValue->as<ViewModelInstanceColor>();
-    viewModelInstanceColor->propertyValue(value);
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceColor>())
+  {
+    return;
+  }
+  auto viewModelInstanceColor = viewModelInstanceValue
+                                    ->as<ViewModelInstanceColor>();
+  viewModelInstanceColor->propertyValue(value);
 }
 
 EXPORT void setViewModelInstanceStringValue(
     ViewModelInstanceValue* viewModelInstance,
     const char* value)
 {
-    if (viewModelInstance == nullptr ||
-        !viewModelInstance->is<ViewModelInstanceString>())
-    {
-        return;
-    }
-    auto viewModelInstanceString =
-        viewModelInstance->as<ViewModelInstanceString>();
-    // Copy string so we never hold the Dart-allocated pointer; avoids
-    // use-after-free if Dart frees the buffer after this returns.
-    std::string valueCopy(value != nullptr ? value : "");
-    viewModelInstanceString->propertyValue(valueCopy);
+  if (viewModelInstance == nullptr ||
+      !viewModelInstance->is<ViewModelInstanceString>())
+  {
+    return;
+  }
+  auto viewModelInstanceString = viewModelInstance
+                                     ->as<ViewModelInstanceString>();
+  // Copy string so we never hold the Dart-allocated pointer; avoids
+  // use-after-free if Dart frees the buffer after this returns.
+  std::string valueCopy(value != nullptr ? value : "");
+  viewModelInstanceString->propertyValue(valueCopy);
 }
 
 EXPORT void setViewModelInstanceSymbolListIndexValue(
     ViewModelInstanceValue* viewModelInstance,
     uint32_t value)
 {
-    if (viewModelInstance == nullptr ||
-        !viewModelInstance->is<ViewModelInstanceSymbolListIndex>())
-    {
-        return;
-    }
-    auto viewModelInstanceListIndex =
-        viewModelInstance->as<ViewModelInstanceSymbolListIndex>();
-    viewModelInstanceListIndex->propertyValue(value);
+  if (viewModelInstance == nullptr ||
+      !viewModelInstance->is<ViewModelInstanceSymbolListIndex>())
+  {
+    return;
+  }
+  auto viewModelInstanceListIndex = viewModelInstance->as<
+      ViewModelInstanceSymbolListIndex>();
+  viewModelInstanceListIndex->propertyValue(value);
 }
 
 EXPORT void setViewModelInstanceArtboardValue(
     ViewModelInstanceValue* viewModelInstance,
     uint32_t value)
 {
-    if (viewModelInstance == nullptr ||
-        !viewModelInstance->is<ViewModelInstanceArtboard>())
-    {
-        return;
-    }
-    auto viewModelInstanceArtboard =
-        viewModelInstance->as<ViewModelInstanceArtboard>();
-    viewModelInstanceArtboard->propertyValue(value);
+  if (viewModelInstance == nullptr ||
+      !viewModelInstance->is<ViewModelInstanceArtboard>())
+  {
+    return;
+  }
+  auto viewModelInstanceArtboard = viewModelInstance
+                                       ->as<ViewModelInstanceArtboard>();
+  viewModelInstanceArtboard->propertyValue(value);
 }
 
 EXPORT void setViewModelInstanceViewModelValue(
     ViewModelInstanceValue* viewModelInstanceValue,
     ViewModelInstance* viewModelInstance)
 {
-    if (viewModelInstance == nullptr || viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceViewModel>())
-    {
-        return;
-    }
-    auto viewModelInstanceViewModel =
-        viewModelInstanceValue->as<ViewModelInstanceViewModel>();
-    viewModelInstanceViewModel->updateViewModel(viewModelInstance);
+  if (viewModelInstance == nullptr || viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceViewModel>())
+  {
+    return;
+  }
+  auto viewModelInstanceViewModel = viewModelInstanceValue
+                                        ->as<ViewModelInstanceViewModel>();
+  viewModelInstanceViewModel->updateViewModel(viewModelInstance);
 }
 
 EXPORT void setViewModelInstanceListValue(
@@ -2870,241 +3027,242 @@ EXPORT void setViewModelInstanceListValue(
     ViewModelInstance* const* instances,
     size_t count)
 {
-    if (viewModelInstanceValue == nullptr ||
-        !viewModelInstanceValue->is<ViewModelInstanceList>())
+  if (viewModelInstanceValue == nullptr ||
+      !viewModelInstanceValue->is<ViewModelInstanceList>())
+  {
+    return;
+  }
+  auto list = viewModelInstanceValue->as<ViewModelInstanceList>();
+  if (list == nullptr)
+  {
+    return;
+  }
+  // Build a pool of existing wrappers keyed by the ViewModelInstance
+  // they wrap. Using a multimap so that duplicate VMI entries each get
+  // their own wrapper and a given wrapper is reused at most once.
+  std::unordered_multimap<ViewModelInstance*, rcp<ViewModelInstanceListItem>>
+      pool;
+  for (auto& existing : list->listItems())
+  {
+    pool.emplace(existing->viewModelInstance().get(), existing);
+  }
+  std::vector<rcp<ViewModelInstanceListItem>> items;
+  items.reserve(count);
+  for (size_t i = 0; i < count; ++i)
+  {
+    if (instances != nullptr && instances[i] != nullptr)
     {
-        return;
+      // Reuse an existing wrapper if one is still available in
+      // the pool, to preserve pointer identity.
+      auto it = pool.find(instances[i]);
+      if (it != pool.end())
+      {
+        items.push_back(std::move(it->second));
+        pool.erase(it);
+      }
+      else
+      {
+        auto item = rcp(new ViewModelInstanceListItem());
+        item->viewModelInstance(ref_rcp(instances[i]));
+        items.push_back(std::move(item));
+      }
     }
-    auto list = viewModelInstanceValue->as<ViewModelInstanceList>();
-    if (list == nullptr)
-    {
-        return;
-    }
-    // Build a pool of existing wrappers keyed by the ViewModelInstance
-    // they wrap. Using a multimap so that duplicate VMI entries each get
-    // their own wrapper and a given wrapper is reused at most once.
-    std::unordered_multimap<ViewModelInstance*, rcp<ViewModelInstanceListItem>>
-        pool;
-    for (auto& existing : list->listItems())
-    {
-        pool.emplace(existing->viewModelInstance().get(), existing);
-    }
-    std::vector<rcp<ViewModelInstanceListItem>> items;
-    items.reserve(count);
-    for (size_t i = 0; i < count; ++i)
-    {
-        if (instances != nullptr && instances[i] != nullptr)
-        {
-            // Reuse an existing wrapper if one is still available in
-            // the pool, to preserve pointer identity.
-            auto it = pool.find(instances[i]);
-            if (it != pool.end())
-            {
-                items.push_back(std::move(it->second));
-                pool.erase(it);
-            }
-            else
-            {
-                auto item = rcp(new ViewModelInstanceListItem());
-                item->viewModelInstance(ref_rcp(instances[i]));
-                items.push_back(std::move(item));
-            }
-        }
-    }
-    list->updateList(&items);
+  }
+  list->updateList(&items);
 }
 
 // Buffer response structure for serialized data
 struct ViewModelInstanceBufferResponse
 {
 #ifdef __EMSCRIPTEN__
-    WasmPtr data;
+  WasmPtr data;
 #else
-    uint8_t* data;
+  uint8_t* data;
 #endif
-    size_t size;
+  size_t size;
 };
 
 // Forward declaration
-static void serializeViewModelInstance(ViewModelInstance* instance,
-                                       VectorBinaryWriter& writer);
+static void serializeViewModelInstance(
+    ViewModelInstance* instance,
+    VectorBinaryWriter& writer);
 static void serializeViewModelInstanceToBytesInternal(
     ViewModelInstance* viewModelInstance,
     VectorBinaryWriter& writer);
 
 // Helper function to serialize a ViewModelInstanceValue
-static void serializeViewModelInstanceValue(ViewModelInstanceValue* value,
-                                            VectorBinaryWriter& writer)
+static void serializeViewModelInstanceValue(
+    ViewModelInstanceValue* value,
+    VectorBinaryWriter& writer)
 {
-    if (value == nullptr)
-    {
-        return;
-    }
+  if (value == nullptr)
+  {
+    return;
+  }
 
-    // Write property ID
-    writer.writeVarUint(value->viewModelPropertyId());
+  // Write property ID
+  writer.writeVarUint(value->viewModelPropertyId());
 
-    // Write property type based on coreType
-    uint16_t propertyType = value->coreType();
-    if (value->is<ViewModelInstanceNumber>())
+  // Write property type based on coreType
+  uint16_t propertyType = value->coreType();
+  if (value->is<ViewModelInstanceNumber>())
+  {
+    auto numberValue = value->as<ViewModelInstanceNumber>();
+    writer.write(propertyType);
+    writer.writeDouble(numberValue->propertyValue());
+  }
+  else if (value->is<ViewModelInstanceString>())
+  {
+    auto stringValue = value->as<ViewModelInstanceString>();
+    writer.write(propertyType);
+    writer.write(stringValue->propertyValue());
+  }
+  else if (value->is<ViewModelInstanceBoolean>())
+  {
+    auto boolValue = value->as<ViewModelInstanceBoolean>();
+    writer.write(propertyType);
+    writer.write(static_cast<uint8_t>(boolValue->propertyValue() ? 1 : 0));
+  }
+  else if (value->is<ViewModelInstanceColor>())
+  {
+    auto colorValue = value->as<ViewModelInstanceColor>();
+    writer.write(propertyType);
+    writer.writeVarUint(static_cast<uint32_t>(colorValue->propertyValue()));
+  }
+  else if (value->is<ViewModelInstanceEnum>())
+  {
+    auto enumValue = value->as<ViewModelInstanceEnum>();
+    writer.write(propertyType);
+    writer.writeVarUint(static_cast<uint32_t>(enumValue->propertyValue()));
+  }
+  else if (value->is<ViewModelInstanceTrigger>())
+  {
+    writer.write(propertyType);
+    // Triggers don't have a persistent value, just the type
+  }
+  else if (value->is<ViewModelInstanceList>())
+  {
+    auto listValue = value->as<ViewModelInstanceList>();
+    writer.write(propertyType);
+    auto listItems = listValue->listItems();
+    writer.writeVarUint(static_cast<uint32_t>(listItems.size()));
+    for (auto& item : listItems)
     {
-        auto numberValue = value->as<ViewModelInstanceNumber>();
-        writer.write(propertyType);
-        writer.writeDouble(numberValue->propertyValue());
+      if (item->viewModelInstance() != nullptr)
+      {
+        // Write 1 to indicate non-null, then serialize
+        writer.writeVarUint(static_cast<uint32_t>(1));
+        serializeViewModelInstance(item->viewModelInstance().get(), writer);
+      }
+      else
+      {
+        // Write 0 to indicate null
+        writer.writeVarUint(static_cast<uint32_t>(0));
+      }
     }
-    else if (value->is<ViewModelInstanceString>())
+  }
+  else if (value->is<ViewModelInstanceViewModel>())
+  {
+    auto viewModelValue = value->as<ViewModelInstanceViewModel>();
+    writer.write(propertyType);
+    auto refInstance = viewModelValue->referenceViewModelInstance();
+    if (refInstance != nullptr)
     {
-        auto stringValue = value->as<ViewModelInstanceString>();
-        writer.write(propertyType);
-        writer.write(stringValue->propertyValue());
+      // Write 1 to indicate non-null, then serialize
+      writer.writeVarUint(static_cast<uint32_t>(1));
+      serializeViewModelInstance(refInstance.get(), writer);
     }
-    else if (value->is<ViewModelInstanceBoolean>())
+    else
     {
-        auto boolValue = value->as<ViewModelInstanceBoolean>();
-        writer.write(propertyType);
-        writer.write(static_cast<uint8_t>(boolValue->propertyValue() ? 1 : 0));
+      // Write 0 to indicate null
+      writer.writeVarUint(static_cast<uint32_t>(0));
     }
-    else if (value->is<ViewModelInstanceColor>())
-    {
-        auto colorValue = value->as<ViewModelInstanceColor>();
-        writer.write(propertyType);
-        writer.writeVarUint(static_cast<uint32_t>(colorValue->propertyValue()));
-    }
-    else if (value->is<ViewModelInstanceEnum>())
-    {
-        auto enumValue = value->as<ViewModelInstanceEnum>();
-        writer.write(propertyType);
-        writer.writeVarUint(static_cast<uint32_t>(enumValue->propertyValue()));
-    }
-    else if (value->is<ViewModelInstanceTrigger>())
-    {
-        writer.write(propertyType);
-        // Triggers don't have a persistent value, just the type
-    }
-    else if (value->is<ViewModelInstanceList>())
-    {
-        auto listValue = value->as<ViewModelInstanceList>();
-        writer.write(propertyType);
-        auto listItems = listValue->listItems();
-        writer.writeVarUint(static_cast<uint32_t>(listItems.size()));
-        for (auto& item : listItems)
-        {
-            if (item->viewModelInstance() != nullptr)
-            {
-                // Write 1 to indicate non-null, then serialize
-                writer.writeVarUint(static_cast<uint32_t>(1));
-                serializeViewModelInstance(item->viewModelInstance().get(),
-                                           writer);
-            }
-            else
-            {
-                // Write 0 to indicate null
-                writer.writeVarUint(static_cast<uint32_t>(0));
-            }
-        }
-    }
-    else if (value->is<ViewModelInstanceViewModel>())
-    {
-        auto viewModelValue = value->as<ViewModelInstanceViewModel>();
-        writer.write(propertyType);
-        auto refInstance = viewModelValue->referenceViewModelInstance();
-        if (refInstance != nullptr)
-        {
-            // Write 1 to indicate non-null, then serialize
-            writer.writeVarUint(static_cast<uint32_t>(1));
-            serializeViewModelInstance(refInstance.get(), writer);
-        }
-        else
-        {
-            // Write 0 to indicate null
-            writer.writeVarUint(static_cast<uint32_t>(0));
-        }
-    }
-    else if (value->is<ViewModelInstanceSymbolListIndex>())
-    {
-        auto indexValue = value->as<ViewModelInstanceSymbolListIndex>();
-        writer.write(propertyType);
-        writer.writeVarUint(static_cast<uint32_t>(indexValue->propertyValue()));
-    }
-    else if (value->is<ViewModelInstanceAssetImage>())
-    {
-        auto assetValue = value->as<ViewModelInstanceAssetImage>();
-        writer.write(propertyType);
-        writer.writeVarUint(static_cast<uint32_t>(assetValue->propertyValue()));
-    }
-    else if (value->is<ViewModelInstanceAssetFont>())
-    {
-        auto assetValue = value->as<ViewModelInstanceAssetFont>();
-        writer.write(propertyType);
-        writer.writeVarUint(static_cast<uint32_t>(assetValue->propertyValue()));
-    }
-    else if (value->is<ViewModelInstanceArtboard>())
-    {
-        auto artboardValue = value->as<ViewModelInstanceArtboard>();
-        writer.write(propertyType);
-        writer.writeVarUint(
-            static_cast<uint32_t>(artboardValue->propertyValue()));
-    }
+  }
+  else if (value->is<ViewModelInstanceSymbolListIndex>())
+  {
+    auto indexValue = value->as<ViewModelInstanceSymbolListIndex>();
+    writer.write(propertyType);
+    writer.writeVarUint(static_cast<uint32_t>(indexValue->propertyValue()));
+  }
+  else if (value->is<ViewModelInstanceAssetImage>())
+  {
+    auto assetValue = value->as<ViewModelInstanceAssetImage>();
+    writer.write(propertyType);
+    writer.writeVarUint(static_cast<uint32_t>(assetValue->propertyValue()));
+  }
+  else if (value->is<ViewModelInstanceAssetFont>())
+  {
+    auto assetValue = value->as<ViewModelInstanceAssetFont>();
+    writer.write(propertyType);
+    writer.writeVarUint(static_cast<uint32_t>(assetValue->propertyValue()));
+  }
+  else if (value->is<ViewModelInstanceArtboard>())
+  {
+    auto artboardValue = value->as<ViewModelInstanceArtboard>();
+    writer.write(propertyType);
+    writer.writeVarUint(static_cast<uint32_t>(artboardValue->propertyValue()));
+  }
 }
 
 // Helper function to serialize a ViewModelInstance
-static void serializeViewModelInstance(ViewModelInstance* instance,
-                                       VectorBinaryWriter& writer)
+static void serializeViewModelInstance(
+    ViewModelInstance* instance,
+    VectorBinaryWriter& writer)
 {
-    if (instance == nullptr)
-    {
-        return;
-    }
+  if (instance == nullptr)
+  {
+    return;
+  }
 
-    // Write viewModel ID
-    writer.writeVarUint(static_cast<uint32_t>(instance->viewModelId()));
+  // Write viewModel ID
+  writer.writeVarUint(static_cast<uint32_t>(instance->viewModelId()));
 
-    // Write property count
-    auto propertyValues = instance->propertyValues();
-    writer.writeVarUint(static_cast<uint32_t>(propertyValues.size()));
+  // Write property count
+  auto propertyValues = instance->propertyValues();
+  writer.writeVarUint(static_cast<uint32_t>(propertyValues.size()));
 
-    // Write each property value
-    for (auto& value : propertyValues)
-    {
-        serializeViewModelInstanceValue(value.get(), writer);
-    }
+  // Write each property value
+  for (auto& value : propertyValues)
+  {
+    serializeViewModelInstanceValue(value.get(), writer);
+  }
 }
 
 static void serializeViewModelInstanceToBytesInternal(
     ViewModelInstance* viewModelInstance,
     VectorBinaryWriter& writer)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return;
-    }
+  if (viewModelInstance == nullptr)
+  {
+    return;
+  }
 
-    // Serialize the instance
-    serializeViewModelInstance(viewModelInstance, writer);
+  // Serialize the instance
+  serializeViewModelInstance(viewModelInstance, writer);
 }
 
 EXPORT void freeViewModelInstanceSerializedData(
     ViewModelInstanceBufferResponse* response)
 {
-    if (response == nullptr)
-    {
-        return;
-    }
+  if (response == nullptr)
+  {
+    return;
+  }
 #ifdef __EMSCRIPTEN__
-    if (response->data != 0)
+  if (response->data != 0)
 #else
-    if (response->data != nullptr)
+  if (response->data != nullptr)
 #endif
-    {
+  {
 #ifdef __EMSCRIPTEN__
-        free(reinterpret_cast<void*>(response->data));
-        response->data = 0;
+    free(reinterpret_cast<void*>(response->data));
+    response->data = 0;
 #else
-        free(response->data);
-        response->data = nullptr;
+    free(response->data);
+    response->data = nullptr;
 #endif
-    }
-    response->size = 0;
+  }
+  response->size = 0;
 }
 
 #ifdef WITH_RIVE_TOOLS
@@ -3113,445 +3271,454 @@ EXPORT bool serializeViewModelInstanceByPointer(
     ViewModelInstance* instance,
     ViewModelInstanceBufferResponse* response)
 {
-    if (file == nullptr || instance == nullptr || response == nullptr)
-    {
-        return false;
-    }
-    if (!file->containsViewModelInstance(instance))
-    {
-        return false;
-    }
-    std::vector<uint8_t> buffer;
-    VectorBinaryWriter writer(&buffer);
-    serializeViewModelInstanceToBytesInternal(instance, writer);
-    if (buffer.empty())
-    {
-        return false;
-    }
-    void* buf = malloc(buffer.size());
-    if (buf == nullptr)
-    {
-        return false;
-    }
-    memcpy(buf, buffer.data(), buffer.size());
+  if (file == nullptr || instance == nullptr || response == nullptr)
+  {
+    return false;
+  }
+  if (!file->containsViewModelInstance(instance))
+  {
+    return false;
+  }
+  std::vector<uint8_t> buffer;
+  VectorBinaryWriter writer(&buffer);
+  serializeViewModelInstanceToBytesInternal(instance, writer);
+  if (buffer.empty())
+  {
+    return false;
+  }
+  void* buf = malloc(buffer.size());
+  if (buf == nullptr)
+  {
+    return false;
+  }
+  memcpy(buf, buffer.data(), buffer.size());
 #ifdef __EMSCRIPTEN__
-    response->data = reinterpret_cast<WasmPtr>(buf);
+  response->data = reinterpret_cast<WasmPtr>(buf);
 #else
-    response->data = static_cast<uint8_t*>(buf);
+  response->data = static_cast<uint8_t*>(buf);
 #endif
-    response->size = buffer.size();
-    return true;
+  response->size = buffer.size();
+  return true;
 }
 #endif
 
 EXPORT void clearRuntimeViewModelInstances(File* file)
 {
-    if (file == nullptr)
-    {
-        return;
-    }
+  if (file == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    file->clearRuntimeViewModelInstances();
+  file->clearRuntimeViewModelInstances();
 #endif
 }
 
 EXPORT uint32_t riveDataBindDirt(WrappedDataBind* wrappedDataBind)
 {
-    if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
-    {
-        return 0;
-    }
-    return static_cast<uint32_t>(wrappedDataBind->dataBind()->dirt());
+  if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
+  {
+    return 0;
+  }
+  return static_cast<uint32_t>(wrappedDataBind->dataBind()->dirt());
 }
 
 EXPORT void riveDataBindSetDirt(WrappedDataBind* wrappedDataBind, uint32_t dirt)
 {
-    if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
-    {
-        return;
-    }
-    wrappedDataBind->dataBind()->dirt(static_cast<ComponentDirt>(dirt));
+  if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
+  {
+    return;
+  }
+  wrappedDataBind->dataBind()->dirt(static_cast<ComponentDirt>(dirt));
 }
 
 EXPORT uint32_t riveDataBindFlags(WrappedDataBind* wrappedDataBind)
 {
-    if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
-    {
-        return 0;
-    }
-    return static_cast<uint32_t>(wrappedDataBind->dataBind()->flags());
+  if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
+  {
+    return 0;
+  }
+  return static_cast<uint32_t>(wrappedDataBind->dataBind()->flags());
 }
 
 EXPORT void riveDataBindUpdate(WrappedDataBind* wrappedDataBind, uint32_t dirt)
 {
-    if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
-    {
-        return;
-    }
-    wrappedDataBind->dataBind()->update(static_cast<ComponentDirt>(dirt));
+  if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
+  {
+    return;
+  }
+  wrappedDataBind->dataBind()->update(static_cast<ComponentDirt>(dirt));
 }
 
 EXPORT void riveDataBindUpdateSourceBinding(WrappedDataBind* wrappedDataBind)
 {
-    if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
-    {
-        return;
-    }
-    wrappedDataBind->dataBind()->updateSourceBinding();
+  if (wrappedDataBind == nullptr || wrappedDataBind->dataBind() == nullptr)
+  {
+    return;
+  }
+  wrappedDataBind->dataBind()->updateSourceBinding();
 }
 
 EXPORT void artboardDraw(WrappedArtboard* wrappedArtboard, Renderer* renderer)
 {
-    if (wrappedArtboard == nullptr || renderer == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->draw(renderer);
+  if (wrappedArtboard == nullptr || renderer == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->draw(renderer);
 }
 
-EXPORT void artboardDrawInternal(WrappedArtboard* wrappedArtboard,
-                                 Renderer* renderer)
+EXPORT void artboardDrawInternal(
+    WrappedArtboard* wrappedArtboard,
+    Renderer* renderer)
 {
-    if (wrappedArtboard == nullptr || renderer == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->drawInternal(renderer);
-}
-
-EXPORT void artboardReset(WrappedArtboard* wrappedArtboard)
-{
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->reset();
+  if (wrappedArtboard == nullptr || renderer == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->drawInternal(renderer);
 }
 
 EXPORT SizeType artboardAnimationCount(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0;
-    }
-    return (SizeType)wrappedArtboard->artboard()->animationCount();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0;
+  }
+  return (SizeType)wrappedArtboard->artboard()->animationCount();
 }
 
 EXPORT SizeType artboardStateMachineCount(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0;
-    }
-    return (SizeType)wrappedArtboard->artboard()->stateMachineCount();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0;
+  }
+  return (SizeType)wrappedArtboard->artboard()->stateMachineCount();
 }
 
 EXPORT WrappedLinearAnimation* artboardAnimationAt(
     WrappedArtboard* wrappedArtboard,
     SizeType index)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    std::unique_ptr<LinearAnimationInstance> animation =
-        wrappedArtboard->artboard()->animationAt(index);
-    if (animation)
-    {
-        wrappedArtboard->monitorEvents(animation.get());
-        return new WrappedLinearAnimation(ref_rcp(wrappedArtboard),
-                                          std::move(animation));
-    }
+  if (wrappedArtboard == nullptr)
+  {
     return nullptr;
+  }
+  std::unique_ptr<LinearAnimationInstance>
+      animation = wrappedArtboard->artboard()->animationAt(index);
+  if (animation)
+  {
+    wrappedArtboard->monitorEvents(animation.get());
+    return new WrappedLinearAnimation(
+        ref_rcp(wrappedArtboard),
+        std::move(animation));
+  }
+  return nullptr;
 }
 
 EXPORT WrappedComponent* artboardComponentNamed(
     WrappedArtboard* wrappedArtboard,
     const char* name)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto component =
-        wrappedArtboard->artboard()->find<TransformComponent>(name);
-    if (component == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedComponent(ref_rcp(wrappedArtboard), component);
+  if (wrappedArtboard == nullptr)
+  {
+    return nullptr;
+  }
+  auto component = wrappedArtboard->artboard()->find<TransformComponent>(name);
+  if (component == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedComponent(ref_rcp(wrappedArtboard), component);
 }
 
 EXPORT void deleteComponent(WrappedComponent* wrappedComponent)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete wrappedComponent;
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete wrappedComponent;
 }
 
-EXPORT void componentGetWorldTransform(WrappedComponent* wrappedComponent,
-                                       float* out)
+EXPORT void componentGetWorldTransform(
+    WrappedComponent* wrappedComponent,
+    float* out)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    const Mat2D& wt = wrappedComponent->component()->worldTransform();
-    memcpy(out, &wt, sizeof(float) * 6);
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  const Mat2D& wt = wrappedComponent->component()->worldTransform();
+  memcpy(out, &wt, sizeof(float) * 6);
 }
 
-EXPORT void componentGetLocalBounds(WrappedComponent* wrappedComponent,
-                                    float* out)
+EXPORT void componentGetLocalBounds(
+    WrappedComponent* wrappedComponent,
+    float* out)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    AABB bounds = wrappedComponent->component()->localBounds();
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  AABB bounds = wrappedComponent->component()->localBounds();
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
-EXPORT void componentSetWorldTransform(WrappedComponent* wrappedComponent,
-                                       float xx,
-                                       float xy,
-                                       float yx,
-                                       float yy,
-                                       float tx,
-                                       float ty)
+EXPORT void componentSetWorldTransform(
+    WrappedComponent* wrappedComponent,
+    float xx,
+    float xy,
+    float yx,
+    float yy,
+    float tx,
+    float ty)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    Mat2D& wt = wrappedComponent->component()->mutableWorldTransform();
-    wt[0] = xx;
-    wt[1] = xy;
-    wt[2] = yx;
-    wt[3] = yy;
-    wt[4] = tx;
-    wt[5] = ty;
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  Mat2D& wt = wrappedComponent->component()->mutableWorldTransform();
+  wt[0] = xx;
+  wt[1] = xy;
+  wt[2] = yx;
+  wt[3] = yy;
+  wt[4] = tx;
+  wt[5] = ty;
 }
 
 EXPORT void artboardGetRenderTransform(WrappedArtboard* artboard, float* out)
 {
-    const Mat2D& wt = artboard->renderTransform;
-    memcpy(out, &wt, sizeof(float) * 6);
+  const Mat2D& wt = artboard->renderTransform;
+  memcpy(out, &wt, sizeof(float) * 6);
 }
 
-EXPORT void artboardSetRenderTransform(WrappedArtboard* artboard,
-                                       float xx,
-                                       float xy,
-                                       float yx,
-                                       float yy,
-                                       float tx,
-                                       float ty)
+EXPORT void artboardSetRenderTransform(
+    WrappedArtboard* artboard,
+    float xx,
+    float xy,
+    float yx,
+    float yy,
+    float tx,
+    float ty)
 {
-    Mat2D& wt = artboard->renderTransform;
-    wt[0] = xx;
-    wt[1] = xy;
-    wt[2] = yx;
-    wt[3] = yy;
-    wt[4] = tx;
-    wt[5] = ty;
+  Mat2D& wt = artboard->renderTransform;
+  wt[0] = xx;
+  wt[1] = xy;
+  wt[2] = yx;
+  wt[3] = yy;
+  wt[4] = tx;
+  wt[5] = ty;
 }
 
 EXPORT float componentGetScaleX(WrappedComponent* wrappedComponent)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return 1.0f;
-    }
-    return wrappedComponent->component()->scaleX();
+  if (wrappedComponent == nullptr)
+  {
+    return 1.0f;
+  }
+  return wrappedComponent->component()->scaleX();
 }
 
 EXPORT void componentSetScaleX(WrappedComponent* wrappedComponent, float value)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    wrappedComponent->component()->scaleX(value);
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  wrappedComponent->component()->scaleX(value);
 }
 
 EXPORT float componentGetX(WrappedComponent* wrappedComponent)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedComponent->component()->x();
+  if (wrappedComponent == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedComponent->component()->x();
 }
 
 EXPORT void componentSetX(WrappedComponent* wrappedComponent, float value)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    if (wrappedComponent->component()->is<Node>())
-    {
-        Node* node = wrappedComponent->component()->as<Node>();
-        node->x(value);
-    }
-    else if (wrappedComponent->component()->is<RootBone>())
-    {
-        RootBone* bone = wrappedComponent->component()->as<RootBone>();
-        bone->x(value);
-    }
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  if (wrappedComponent->component()->is<Node>())
+  {
+    Node* node = wrappedComponent->component()->as<Node>();
+    node->x(value);
+  }
+  else if (wrappedComponent->component()->is<RootBone>())
+  {
+    RootBone* bone = wrappedComponent->component()->as<RootBone>();
+    bone->x(value);
+  }
 }
 
 EXPORT float componentGetY(WrappedComponent* wrappedComponent)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedComponent->component()->y();
+  if (wrappedComponent == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedComponent->component()->y();
 }
 
 EXPORT void componentSetY(WrappedComponent* wrappedComponent, float value)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    auto component = wrappedComponent->component();
-    if (component->is<Node>())
-    {
-        Node* node = component->as<Node>();
-        node->y(value);
-    }
-    else if (component->is<RootBone>())
-    {
-        RootBone* bone = component->as<RootBone>();
-        bone->y(value);
-    }
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  auto component = wrappedComponent->component();
+  if (component->is<Node>())
+  {
+    Node* node = component->as<Node>();
+    node->y(value);
+  }
+  else if (component->is<RootBone>())
+  {
+    RootBone* bone = component->as<RootBone>();
+    bone->y(value);
+  }
 }
 
 EXPORT float componentGetScaleY(WrappedComponent* wrappedComponent)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return 1.0f;
-    }
-    return wrappedComponent->component()->scaleY();
+  if (wrappedComponent == nullptr)
+  {
+    return 1.0f;
+  }
+  return wrappedComponent->component()->scaleY();
 }
 
 EXPORT void componentSetScaleY(WrappedComponent* wrappedComponent, float value)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    wrappedComponent->component()->scaleY(value);
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  wrappedComponent->component()->scaleY(value);
 }
 
 EXPORT float componentGetRotation(WrappedComponent* wrappedComponent)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedComponent->component()->rotation();
+  if (wrappedComponent == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedComponent->component()->rotation();
 }
 
-EXPORT void componentSetRotation(WrappedComponent* wrappedComponent,
-                                 float value)
+EXPORT void componentSetRotation(
+    WrappedComponent* wrappedComponent,
+    float value)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    wrappedComponent->component()->rotation(value);
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  wrappedComponent->component()->rotation(value);
 }
 
-EXPORT void componentSetLocalFromWorld(WrappedComponent* wrappedComponent,
-                                       float xx,
-                                       float xy,
-                                       float yx,
-                                       float yy,
-                                       float tx,
-                                       float ty)
+EXPORT void componentSetLocalFromWorld(
+    WrappedComponent* wrappedComponent,
+    float xx,
+    float xy,
+    float yx,
+    float yy,
+    float tx,
+    float ty)
 {
-    if (wrappedComponent == nullptr)
-    {
-        return;
-    }
-    auto component = wrappedComponent->component();
-    Mat2D world = getParentWorld(*component).invertOrIdentity() *
-                  Mat2D(xx, xy, yx, yy, tx, ty);
-    TransformComponents components = world.decompose();
-    if (component->is<Node>())
-    {
-        Node* node = component->as<Node>();
-        node->x(components.x());
-        node->y(components.y());
-    }
-    else if (component->is<RootBone>())
-    {
-        RootBone* bone = component->as<RootBone>();
-        bone->x(components.x());
-        bone->y(components.y());
-    }
-    component->scaleX(components.scaleX());
-    component->scaleY(components.scaleY());
-    component->rotation(components.rotation());
+  if (wrappedComponent == nullptr)
+  {
+    return;
+  }
+  auto component = wrappedComponent->component();
+  Mat2D world = getParentWorld(*component).invertOrIdentity() *
+                Mat2D(xx, xy, yx, yy, tx, ty);
+  TransformComponents components = world.decompose();
+  if (component->is<Node>())
+  {
+    Node* node = component->as<Node>();
+    node->x(components.x());
+    node->y(components.y());
+  }
+  else if (component->is<RootBone>())
+  {
+    RootBone* bone = component->as<RootBone>();
+    bone->x(components.x());
+    bone->y(components.y());
+  }
+  component->scaleX(components.scaleX());
+  component->scaleY(components.scaleY());
+  component->rotation(components.rotation());
 }
 
 EXPORT const char* artboardName(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto name = wrappedArtboard->artboard()->name();
-    return toCString(name);
+  if (wrappedArtboard == nullptr)
+  {
+    return nullptr;
+  }
+  auto name = wrappedArtboard->artboard()->name();
+  return toCString(name);
 }
 
 EXPORT void* artboardGetInnerPointer(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    return static_cast<void*>(wrappedArtboard->artboard());
+  if (wrappedArtboard == nullptr)
+  {
+    return nullptr;
+  }
+  return static_cast<void*>(wrappedArtboard->artboard());
 }
 
 EXPORT WrappedLinearAnimation* artboardAnimationNamed(
     WrappedArtboard* wrappedArtboard,
     const char* name)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    std::unique_ptr<LinearAnimationInstance> animation =
-        wrappedArtboard->artboard()->animationNamed(name);
-    if (animation)
-    {
-        wrappedArtboard->monitorEvents(animation.get());
-        return new WrappedLinearAnimation(ref_rcp(wrappedArtboard),
-                                          std::move(animation));
-    }
+  if (wrappedArtboard == nullptr)
+  {
     return nullptr;
+  }
+  std::unique_ptr<LinearAnimationInstance>
+      animation = wrappedArtboard->artboard()->animationNamed(name);
+  if (animation)
+  {
+    wrappedArtboard->monitorEvents(animation.get());
+    return new WrappedLinearAnimation(
+        ref_rcp(wrappedArtboard),
+        std::move(animation));
+  }
+  return nullptr;
 }
 
-EXPORT void artboardSetFrameOrigin(WrappedArtboard* wrappedArtboard,
-                                   bool frameOrigin)
+EXPORT void artboardSetFrameOrigin(
+    WrappedArtboard* wrappedArtboard,
+    bool frameOrigin)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->frameOrigin(frameOrigin);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->frameOrigin(frameOrigin);
 }
 
 EXPORT bool artboardGetFrameOrigin(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return false;
-    }
-    return wrappedArtboard->artboard()->frameOrigin();
+  if (wrappedArtboard == nullptr)
+  {
+    return false;
+  }
+  return wrappedArtboard->artboard()->frameOrigin();
+}
+
+EXPORT bool artboardDidChange(WrappedArtboard* wrappedArtboard)
+{
+  if (wrappedArtboard == nullptr)
+  {
+    return false;
+  }
+  return wrappedArtboard->artboard()->didChange();
 }
 
 // Origin override: a ComponentOrigin child of a nested artboard replaces the
@@ -3559,455 +3726,564 @@ EXPORT bool artboardGetFrameOrigin(WrappedArtboard* wrappedArtboard)
 // NestedArtboard::applyOriginOverride.
 EXPORT float riveArtboardGetOriginX(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->originX();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->originX();
 }
 
-EXPORT void riveArtboardSetOriginX(WrappedArtboard* wrappedArtboard,
-                                   float value)
+EXPORT void riveArtboardSetOriginX(
+    WrappedArtboard* wrappedArtboard,
+    float value)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    auto artboard = wrappedArtboard->artboard();
-    artboard->originX(value);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  auto artboard = wrappedArtboard->artboard();
+  artboard->originX(value);
 }
 
 EXPORT float riveArtboardGetOriginY(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->originY();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->originY();
 }
 
-EXPORT void riveArtboardSetOriginY(WrappedArtboard* wrappedArtboard,
-                                   float value)
+EXPORT void riveArtboardSetOriginY(
+    WrappedArtboard* wrappedArtboard,
+    float value)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    auto artboard = wrappedArtboard->artboard();
-    artboard->originY(value);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  auto artboard = wrappedArtboard->artboard();
+  artboard->originY(value);
 }
 
 EXPORT const char* animationInstanceName(
     WrappedLinearAnimation* wrappedAnimation)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return nullptr;
-    }
-    auto name = wrappedAnimation->animation()->name();
-    return toCString(name);
+  if (wrappedAnimation == nullptr)
+  {
+    return nullptr;
+  }
+  auto name = wrappedAnimation->animation()->name();
+  return toCString(name);
 }
 
-EXPORT bool animationInstanceAdvance(WrappedLinearAnimation* wrappedAnimation,
-                                     float elapsedSeconds,
-                                     bool nested)
+EXPORT bool animationInstanceAdvance(
+    WrappedLinearAnimation* wrappedAnimation,
+    float elapsedSeconds,
+    bool nested)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return false;
-    }
-    return wrappedAnimation->animation()->advance(elapsedSeconds);
+  if (wrappedAnimation == nullptr)
+  {
+    return false;
+  }
+  return wrappedAnimation->animation()->advance(elapsedSeconds);
 }
 
-EXPORT void animationInstanceApply(WrappedLinearAnimation* wrappedAnimation,
-                                   float mix)
+EXPORT void animationInstanceApply(
+    WrappedLinearAnimation* wrappedAnimation,
+    float mix)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return;
-    }
-    wrappedAnimation->animation()->apply(mix);
+  if (wrappedAnimation == nullptr)
+  {
+    return;
+  }
+  wrappedAnimation->animation()->apply(mix);
 }
 
 EXPORT bool animationInstanceAdvanceAndApply(
     WrappedLinearAnimation* wrappedAnimation,
     float elapsedSeconds)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return false;
-    }
-    return wrappedAnimation->animation()->advanceAndApply(elapsedSeconds);
+  if (wrappedAnimation == nullptr)
+  {
+    return false;
+  }
+  return wrappedAnimation->animation()->advanceAndApply(elapsedSeconds);
 }
 
 EXPORT float animationInstanceGetLocalSeconds(
     WrappedLinearAnimation* wrappedAnimation,
     float seconds)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedAnimation->animation()->animation()->globalToLocalSeconds(
-        seconds);
+  if (wrappedAnimation == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedAnimation->animation()->animation()->globalToLocalSeconds(
+      seconds);
 }
 
 EXPORT float animationInstanceGetDuration(
     WrappedLinearAnimation* wrappedAnimation,
     float seconds)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedAnimation->animation()->durationSeconds();
+  if (wrappedAnimation == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedAnimation->animation()->durationSeconds();
 }
 
 EXPORT float animationInstanceGetTime(WrappedLinearAnimation* wrappedAnimation)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedAnimation->animation()->time();
+  if (wrappedAnimation == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedAnimation->animation()->time();
 }
 
-EXPORT void animationInstanceSetTime(WrappedLinearAnimation* wrappedAnimation,
-                                     float time)
+EXPORT void animationInstanceSetTime(
+    WrappedLinearAnimation* wrappedAnimation,
+    float time)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return;
-    }
-    wrappedAnimation->animation()->time(time);
+  if (wrappedAnimation == nullptr)
+  {
+    return;
+  }
+  wrappedAnimation->animation()->time(time);
 }
 
 EXPORT void animationInstanceDelete(WrappedLinearAnimation* wrappedAnimation)
 {
-    if (wrappedAnimation == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    wrappedAnimation->unref();
+  if (wrappedAnimation == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  wrappedAnimation->unref();
 }
 
-EXPORT void artboardAddToRenderPath(WrappedArtboard* wrappedArtboard,
-                                    RenderPath* renderPath,
-                                    float xx,
-                                    float xy,
-                                    float yx,
-                                    float yy,
-                                    float tx,
-                                    float ty)
+EXPORT void artboardAddToRenderPath(
+    WrappedArtboard* wrappedArtboard,
+    RenderPath* renderPath,
+    float xx,
+    float xy,
+    float yx,
+    float yy,
+    float tx,
+    float ty)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->addToRenderPath(renderPath,
-                                                 Mat2D(xx, xy, yx, yy, tx, ty));
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->addToRenderPath(
+      renderPath,
+      Mat2D(xx, xy, yx, yy, tx, ty));
 }
 
 EXPORT void artboardBounds(WrappedArtboard* wrappedArtboard, float* out)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    AABB bounds = wrappedArtboard->artboard()->bounds();
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  AABB bounds = wrappedArtboard->artboard()->bounds();
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
 EXPORT void artboardLayoutBounds(WrappedArtboard* wrappedArtboard, float* out)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    AABB bounds = wrappedArtboard->artboard()->layoutBounds();
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  AABB bounds = wrappedArtboard->artboard()->layoutBounds();
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
 EXPORT void artboardWorldBounds(WrappedArtboard* wrappedArtboard, float* out)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    AABB bounds = wrappedArtboard->artboard()->worldBounds();
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  AABB bounds = wrappedArtboard->artboard()->worldBounds();
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
 EXPORT void* artboardTakeLayoutNode(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto node = wrappedArtboard->artboard()->takeLayoutData();
+  if (wrappedArtboard == nullptr)
+  {
+    return nullptr;
+  }
+  auto node = wrappedArtboard->artboard()->takeLayoutData();
 #ifdef WITH_RIVE_TOOLS
-    node->ref();
+  node->ref();
 #endif
-    return node;
+  return node;
 }
 
 EXPORT void artboardAddedToHost(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->addedToHost();
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->addedToHost();
 }
 
 EXPORT void artboardSyncStyleChanges(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->syncStyleChangesWithUpdate();
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->syncStyleChangesWithUpdate();
 }
 
-EXPORT void artboardWidthOverride(WrappedArtboard* wrappedArtboard,
-                                  float width,
-                                  int widthUnitValue,
-                                  bool isRow)
+EXPORT void artboardWidthOverride(
+    WrappedArtboard* wrappedArtboard,
+    float width,
+    int widthUnitValue,
+    bool isRow)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->widthOverride(width, widthUnitValue, isRow);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->widthOverride(width, widthUnitValue, isRow);
 }
 
-EXPORT void artboardHeightOverride(WrappedArtboard* wrappedArtboard,
-                                   float height,
-                                   int heightUnitValue,
-                                   bool isRow)
+EXPORT void artboardHeightOverride(
+    WrappedArtboard* wrappedArtboard,
+    float height,
+    int heightUnitValue,
+    bool isRow)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->heightOverride(height, heightUnitValue, isRow);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->heightOverride(height, heightUnitValue, isRow);
 }
 
 EXPORT void artboardParentIsRow(WrappedArtboard* wrappedArtboard, bool isRow)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->parentIsRow(isRow);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->parentIsRow(isRow);
 }
 
-EXPORT void artboardParentIsStack(WrappedArtboard* wrappedArtboard,
-                                  bool isStack)
+EXPORT void artboardParentIsStack(
+    WrappedArtboard* wrappedArtboard,
+    bool isStack)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->parentIsStack(isStack);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->parentIsStack(isStack);
+}
+
+EXPORT void artboardVirtualGridCell(
+    WrappedArtboard* wrappedArtboard,
+    int32_t column,
+    int32_t row)
+{
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->virtualGridCell(column, row);
 }
 
 EXPORT void artboardWidthIntrinsicallySizeOverride(
     WrappedArtboard* wrappedArtboard,
     bool intrinsic)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->widthIntrinsicallySizeOverride(intrinsic);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->widthIntrinsicallySizeOverride(intrinsic);
 }
 
 EXPORT void artboardHeightIntrinsicallySizeOverride(
     WrappedArtboard* wrappedArtboard,
     bool intrinsic)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->heightIntrinsicallySizeOverride(intrinsic);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->heightIntrinsicallySizeOverride(intrinsic);
 }
 
 EXPORT void updateLayoutBounds(WrappedArtboard* wrappedArtboard, bool animate)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->artboard()->updateLayoutBounds(animate);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->artboard()->updateLayoutBounds(animate);
 }
+
+#if defined(__EMSCRIPTEN__)
+using InterpolatorTransformCallback = emscripten::val;
+static emscripten::val g_interpolatorTransform = val::null();
+#else
+typedef float (*InterpolatorTransformCallback)(uint32_t handle, float factor);
+static InterpolatorTransformCallback g_interpolatorTransform = nullptr;
+#endif
+
+/// Installs the Dart function HostedInterpolator calls: it looks the handle
+/// up and runs that interpolator's transform, returning the factor unchanged
+/// for a handle it no longer knows.
+EXPORT void initInterpolatorCallbacks(InterpolatorTransformCallback transform)
+{
+  g_interpolatorTransform = transform;
+}
+
+// The inherited interpolator of an artboard whose parent layout runs in Dart
+// (the editor's own artboards), when that interpolator is scripted. Dart owns
+// the one live instance; this calls back into it by handle, so the nested
+// artboard runs the same script instance -- and the same inputs -- as the
+// parent, the way a nested artboard in the runtime borrows its host's.
+class HostedInterpolator : public KeyFrameInterpolator
+{
+public:
+  explicit HostedInterpolator(uint32_t handle) : m_handle(handle) {}
+
+  uint32_t handle() const { return m_handle; }
+
+  float transform(float factor) const override
+  {
+    if (!CALLBACK_VALID(g_interpolatorTransform))
+    {
+      return factor;
+    }
+#if defined(__EMSCRIPTEN__)
+    return g_interpolatorTransform(m_handle, factor).as<float>();
+#else
+    return g_interpolatorTransform(m_handle, factor);
+#endif
+  }
+
+  float transformValue(float valueFrom, float valueTo, float factor) override
+  {
+    return valueFrom + (valueTo - valueFrom) * transform(factor);
+  }
+
+  // Only HostedInterpolator reports the abstract base's key; every file
+  // interpolator reports its concrete one.
+  static HostedInterpolator* from(KeyFrameInterpolator* interpolator)
+  {
+    return interpolator != nullptr &&
+                   interpolator->coreType() == KeyFrameInterpolatorBase::typeKey
+               ? static_cast<HostedInterpolator*>(interpolator)
+               : nullptr;
+  }
+
+private:
+  uint32_t m_handle;
+};
 
 // Resolves the inherited interpolator for one artboard and applies the cascade.
 // The single-artboard export reuses an existing interpolator when the type
 // hasn't changed (avoids allocation on repeated calls). The batch export always
 // creates fresh, so it passes reuseExisting=false.
-static void applyCascadeLayoutStyle(rive::Artboard* artboard,
-                                    int direction,
-                                    int interpolationType,
-                                    float interpolationTime,
-                                    int interpolatorTypeKey,
-                                    float p0,
-                                    float p1,
-                                    float p2,
-                                    float p3,
-                                    bool reuseExisting)
+static void applyCascadeLayoutStyle(
+    rive::Artboard* artboard,
+    int direction,
+    int interpolationType,
+    float interpolationTime,
+    int interpolatorTypeKey,
+    float p0,
+    float p1,
+    float p2,
+    float p3,
+    uint32_t scriptHandle,
+    bool reuseExisting)
 {
-    auto& owned = artboard->ownedInheritedInterpolator();
+  auto& owned = artboard->ownedInheritedInterpolator();
 
-    // Only build the interpolator when the artboard inherits — otherwise the
-    // cascade discards inherited values immediately, so the work is wasted.
-    KeyFrameInterpolator* interpolator = nullptr;
-    if (interpolatorTypeKey != 0 &&
-        artboard->animationStyle() == LayoutAnimationStyle::inherit)
+  // Only build the interpolator when the artboard inherits — otherwise the
+  // cascade discards inherited values immediately, so the work is wasted.
+  KeyFrameInterpolator* interpolator = nullptr;
+  if (interpolatorTypeKey != 0 &&
+      artboard->animationStyle() == LayoutAnimationStyle::inherit)
+  {
+    if (interpolatorTypeKey == ScriptedInterpolatorBase::typeKey)
     {
-        if (!reuseExisting || owned == nullptr ||
-            static_cast<int>(owned->coreType()) != interpolatorTypeKey)
-        {
-            if (interpolatorTypeKey == CubicEaseInterpolatorBase::typeKey ||
-                interpolatorTypeKey == CubicInterpolatorBase::typeKey ||
-                interpolatorTypeKey == CubicValueInterpolatorBase::typeKey)
-            {
-                owned = std::make_unique<CubicEaseInterpolator>();
-                auto cubic = owned->as<CubicInterpolator>();
-                cubic->x1(p0);
-                cubic->y1(p1);
-                cubic->x2(p2);
-                cubic->y2(p3);
-                cubic->initialize();
-            }
-            else if (interpolatorTypeKey == ElasticInterpolatorBase::typeKey)
-            {
-                owned = std::make_unique<ElasticInterpolator>();
-                auto elastic = owned->as<ElasticInterpolator>();
-                elastic->easingValue((uint32_t)p0);
-                elastic->amplitude(p1);
-                elastic->period(p2);
-                elastic->initialize();
-            }
-        }
-        else
-        {
-            // Same type — update values in-place if they changed.
-            if (owned->is<CubicInterpolator>())
-            {
-                auto cubic = owned->as<CubicInterpolator>();
-                if (cubic->x1() != p0 || cubic->y1() != p1 ||
-                    cubic->x2() != p2 || cubic->y2() != p3)
-                {
-                    cubic->x1(p0);
-                    cubic->y1(p1);
-                    cubic->x2(p2);
-                    cubic->y2(p3);
-                    cubic->initialize();
-                }
-            }
-            else if (owned->is<ElasticInterpolator>())
-            {
-                auto elastic = owned->as<ElasticInterpolator>();
-                if (elastic->easingValue() != (uint32_t)p0 ||
-                    elastic->amplitude() != p1 || elastic->period() != p2)
-                {
-                    elastic->easingValue((uint32_t)p0);
-                    elastic->amplitude(p1);
-                    elastic->period(p2);
-                    elastic->initialize();
-                }
-            }
-        }
-        interpolator = owned.get();
+      auto hosted = HostedInterpolator::from(owned.get());
+      if (!reuseExisting || hosted == nullptr ||
+          hosted->handle() != scriptHandle)
+      {
+        owned = std::make_unique<HostedInterpolator>(scriptHandle);
+      }
+    }
+    else if (
+        !reuseExisting || owned == nullptr ||
+        static_cast<int>(owned->coreType()) != interpolatorTypeKey)
+    {
+      if (interpolatorTypeKey == CubicEaseInterpolatorBase::typeKey ||
+          interpolatorTypeKey == CubicInterpolatorBase::typeKey ||
+          interpolatorTypeKey == CubicValueInterpolatorBase::typeKey)
+      {
+        owned = std::make_unique<CubicEaseInterpolator>();
+        auto cubic = owned->as<CubicInterpolator>();
+        cubic->x1(p0);
+        cubic->y1(p1);
+        cubic->x2(p2);
+        cubic->y2(p3);
+        cubic->initialize();
+      }
+      else if (interpolatorTypeKey == ElasticInterpolatorBase::typeKey)
+      {
+        owned = std::make_unique<ElasticInterpolator>();
+        auto elastic = owned->as<ElasticInterpolator>();
+        elastic->easingValue((uint32_t)p0);
+        elastic->amplitude(p1);
+        elastic->period(p2);
+        elastic->initialize();
+      }
+      else
+      {
+        // A type this can't rebuild. Don't leave the previous
+        // cascade's interpolator in place.
+        owned = nullptr;
+      }
     }
     else
     {
-        owned = nullptr;
+      // Same type — update values in-place if they changed.
+      if (owned->is<CubicInterpolator>())
+      {
+        auto cubic = owned->as<CubicInterpolator>();
+        if (cubic->x1() != p0 || cubic->y1() != p1 || cubic->x2() != p2 ||
+            cubic->y2() != p3)
+        {
+          cubic->x1(p0);
+          cubic->y1(p1);
+          cubic->x2(p2);
+          cubic->y2(p3);
+          cubic->initialize();
+        }
+      }
+      else if (owned->is<ElasticInterpolator>())
+      {
+        auto elastic = owned->as<ElasticInterpolator>();
+        if (elastic->easingValue() != (uint32_t)p0 ||
+            elastic->amplitude() != p1 || elastic->period() != p2)
+        {
+          elastic->easingValue((uint32_t)p0);
+          elastic->amplitude(p1);
+          elastic->period(p2);
+          elastic->initialize();
+        }
+      }
     }
+    interpolator = owned.get();
+  }
+  else
+  {
+    owned = nullptr;
+  }
 
-    artboard->cascadeLayoutStyle((LayoutStyleInterpolation)interpolationType,
-                                 interpolator,
-                                 interpolationTime,
-                                 (LayoutDirection)direction);
+  artboard->cascadeLayoutStyle(
+      (LayoutStyleInterpolation)interpolationType,
+      interpolator,
+      interpolationTime,
+      (LayoutDirection)direction);
 }
 
-EXPORT void cascadeLayoutStyle(WrappedArtboard* wrappedArtboard,
-                               int direction,
-                               int interpolationType,
-                               float interpolationTime,
-                               int interpolatorTypeKey,
-                               float p0,
-                               float p1,
-                               float p2,
-                               float p3)
+EXPORT void cascadeLayoutStyle(
+    WrappedArtboard* wrappedArtboard,
+    int direction,
+    int interpolationType,
+    float interpolationTime,
+    int interpolatorTypeKey,
+    float p0,
+    float p1,
+    float p2,
+    float p3,
+    uint32_t scriptHandle)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    applyCascadeLayoutStyle(wrappedArtboard->artboard(),
-                            direction,
-                            interpolationType,
-                            interpolationTime,
-                            interpolatorTypeKey,
-                            p0,
-                            p1,
-                            p2,
-                            p3,
-                            /*reuseExisting=*/true);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  applyCascadeLayoutStyle(
+      wrappedArtboard->artboard(),
+      direction,
+      interpolationType,
+      interpolationTime,
+      interpolatorTypeKey,
+      p0,
+      p1,
+      p2,
+      p3,
+      scriptHandle,
+      /*reuseExisting=*/true);
 }
 
 // Batch version: crosses the FFI/WASM boundary once for N artboards.
 // artboards is a pointer-to-pointer array of WrappedArtboard instances
 // (Pointer<Pointer<Void>> on the Dart side).
-EXPORT void cascadeLayoutStyleBatch(void** artboards,
-                                    int count,
-                                    int direction,
-                                    int interpolationType,
-                                    float interpolationTime,
-                                    int interpolatorTypeKey,
-                                    float p0,
-                                    float p1,
-                                    float p2,
-                                    float p3)
+EXPORT void cascadeLayoutStyleBatch(
+    void** artboards,
+    int count,
+    int direction,
+    int interpolationType,
+    float interpolationTime,
+    int interpolatorTypeKey,
+    float p0,
+    float p1,
+    float p2,
+    float p3,
+    uint32_t scriptHandle)
 {
-    for (int i = 0; i < count; i++)
+  for (int i = 0; i < count; i++)
+  {
+    auto* wrappedArtboard = static_cast<WrappedArtboard*>(artboards[i]);
+    if (wrappedArtboard == nullptr)
     {
-        auto* wrappedArtboard = static_cast<WrappedArtboard*>(artboards[i]);
-        if (wrappedArtboard == nullptr)
-        {
-            continue;
-        }
-        applyCascadeLayoutStyle(wrappedArtboard->artboard(),
-                                direction,
-                                interpolationType,
-                                interpolationTime,
-                                interpolatorTypeKey,
-                                p0,
-                                p1,
-                                p2,
-                                p3,
-                                /*reuseExisting=*/false);
+      continue;
     }
+    applyCascadeLayoutStyle(
+        wrappedArtboard->artboard(),
+        direction,
+        interpolationType,
+        interpolationTime,
+        interpolatorTypeKey,
+        p0,
+        p1,
+        p2,
+        p3,
+        scriptHandle,
+        /*reuseExisting=*/false);
+  }
 }
 
 #ifdef WITH_RIVE_TOOLS
 // Resolves the collapse for one artboard and applies the cascade.
 static void applyCascadeCollapse(rive::Artboard* artboard, bool collapse)
 {
-    artboard->collapseSingle(collapse);
+  artboard->collapseSingle(collapse);
 }
 
 EXPORT void cascadeCollapse(WrappedArtboard* wrappedArtboard, bool collapse)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    applyCascadeCollapse(wrappedArtboard->artboard(), collapse);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  applyCascadeCollapse(wrappedArtboard->artboard(), collapse);
 }
 
 // Batch version: crosses the FFI/WASM boundary once for N artboards.
@@ -4015,337 +4291,343 @@ EXPORT void cascadeCollapse(WrappedArtboard* wrappedArtboard, bool collapse)
 // (Pointer<Pointer<Void>> on the Dart side).
 EXPORT void cascadeCollapseBatch(void** artboards, int count, bool collapse)
 {
-    for (int i = 0; i < count; i++)
+  for (int i = 0; i < count; i++)
+  {
+    auto* wrappedArtboard = static_cast<WrappedArtboard*>(artboards[i]);
+    if (wrappedArtboard == nullptr)
     {
-        auto* wrappedArtboard = static_cast<WrappedArtboard*>(artboards[i]);
-        if (wrappedArtboard == nullptr)
-        {
-            continue;
-        }
-        applyCascadeCollapse(wrappedArtboard->artboard(), collapse);
+      continue;
     }
+    applyCascadeCollapse(wrappedArtboard->artboard(), collapse);
+  }
 }
 #endif
 
-EXPORT bool riveArtboardAdvance(WrappedArtboard* wrappedArtboard,
-                                float seconds,
-                                int flags)
+EXPORT bool riveArtboardAdvance(
+    WrappedArtboard* wrappedArtboard,
+    float seconds,
+    int flags)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return false;
-    }
-    return wrappedArtboard->artboard()->advanceInternal(seconds,
-                                                        (AdvanceFlags)flags);
+  if (wrappedArtboard == nullptr)
+  {
+    return false;
+  }
+  return wrappedArtboard->artboard()->advanceInternal(
+      seconds,
+      (AdvanceFlags)flags);
 }
 
 EXPORT float riveArtboardGetOpacity(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->opacity();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->opacity();
 }
 
 EXPORT bool riveArtboardUpdatePass(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return false;
-    }
-    return wrappedArtboard->artboard()->updatePass(false);
+  if (wrappedArtboard == nullptr)
+  {
+    return false;
+  }
+  return wrappedArtboard->artboard()->updatePass(false);
 }
 
 EXPORT bool riveArtboardHasComponentDirt(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return false;
-    }
-    return wrappedArtboard->artboard()->hasDirt(ComponentDirt::Components);
+  if (wrappedArtboard == nullptr)
+  {
+    return false;
+  }
+  return wrappedArtboard->artboard()->hasDirt(ComponentDirt::Components);
 }
 
-EXPORT void riveArtboardSetOpacity(WrappedArtboard* wrappedArtboard,
-                                   float opacity)
+EXPORT void riveArtboardSetOpacity(
+    WrappedArtboard* wrappedArtboard,
+    float opacity)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    return wrappedArtboard->artboard()->opacity(opacity);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  return wrappedArtboard->artboard()->opacity(opacity);
 }
 
-EXPORT void riveArtboardSetHostOpacity(WrappedArtboard* wrappedArtboard,
-                                       float hostOpacity)
+EXPORT void riveArtboardSetHostOpacity(
+    WrappedArtboard* wrappedArtboard,
+    float hostOpacity)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    return wrappedArtboard->artboard()->hostOpacity(hostOpacity);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  return wrappedArtboard->artboard()->hostOpacity(hostOpacity);
 }
 
 EXPORT float riveArtboardGetWidth(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->width();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->width();
 }
 
 EXPORT void riveArtboardSetWidth(WrappedArtboard* wrappedArtboard, float width)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    return wrappedArtboard->artboard()->width(width);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  return wrappedArtboard->artboard()->width(width);
 }
 
 EXPORT float riveArtboardGetHeight(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->height();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->height();
 }
 
-EXPORT void riveArtboardSetHeight(WrappedArtboard* wrappedArtboard,
-                                  float height)
+EXPORT void riveArtboardSetHeight(
+    WrappedArtboard* wrappedArtboard,
+    float height)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    return wrappedArtboard->artboard()->height(height);
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  return wrappedArtboard->artboard()->height(height);
 }
 
 EXPORT float riveArtboardGetOriginalWidth(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->originalWidth();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->originalWidth();
 }
 
 EXPORT float riveArtboardGetOriginalHeight(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return 0.0f;
-    }
-    return wrappedArtboard->artboard()->originalHeight();
+  if (wrappedArtboard == nullptr)
+  {
+    return 0.0f;
+  }
+  return wrappedArtboard->artboard()->originalHeight();
 }
 
 EXPORT WrappedStateMachine* riveArtboardStateMachineDefault(
     WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto smi = wrappedArtboard->artboard()->defaultStateMachine();
-    if (smi == nullptr)
-    {
-        smi = wrappedArtboard->artboard()->stateMachineAt(0);
-    }
-    if (smi != nullptr)
-    {
-        wrappedArtboard->monitorEvents(smi.get());
-        return new WrappedStateMachine(ref_rcp(wrappedArtboard),
-                                       std::move(smi));
-    }
+  if (wrappedArtboard == nullptr)
+  {
     return nullptr;
+  }
+  auto smi = wrappedArtboard->artboard()->defaultStateMachine();
+  if (smi == nullptr)
+  {
+    smi = wrappedArtboard->artboard()->stateMachineAt(0);
+  }
+  if (smi != nullptr)
+  {
+    wrappedArtboard->monitorEvents(smi.get());
+    return new WrappedStateMachine(ref_rcp(wrappedArtboard), std::move(smi));
+  }
+  return nullptr;
 }
 
 EXPORT WrappedStateMachine* riveArtboardStateMachineNamed(
     WrappedArtboard* wrappedArtboard,
     const char* name)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-    auto smi = wrappedArtboard->artboard()->stateMachineNamed(name);
-    if (smi != nullptr)
-    {
-        wrappedArtboard->monitorEvents(smi.get());
-        return new WrappedStateMachine(ref_rcp(wrappedArtboard),
-                                       std::move(smi));
-    }
+  if (wrappedArtboard == nullptr)
+  {
     return nullptr;
+  }
+  auto smi = wrappedArtboard->artboard()->stateMachineNamed(name);
+  if (smi != nullptr)
+  {
+    wrappedArtboard->monitorEvents(smi.get());
+    return new WrappedStateMachine(ref_rcp(wrappedArtboard), std::move(smi));
+  }
+  return nullptr;
 }
 
 EXPORT WrappedStateMachine* riveArtboardStateMachineAt(
     WrappedArtboard* wrappedArtboard,
     SizeType index)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return nullptr;
-    }
-
-    auto smi = wrappedArtboard->artboard()->stateMachineAt(index);
-    if (smi != nullptr)
-    {
-        wrappedArtboard->monitorEvents(smi.get());
-        return new WrappedStateMachine(ref_rcp(wrappedArtboard),
-                                       std::move(smi));
-    }
+  if (wrappedArtboard == nullptr)
+  {
     return nullptr;
+  }
+
+  auto smi = wrappedArtboard->artboard()->stateMachineAt(index);
+  if (smi != nullptr)
+  {
+    wrappedArtboard->monitorEvents(smi.get());
+    return new WrappedStateMachine(ref_rcp(wrappedArtboard), std::move(smi));
+  }
+  return nullptr;
 }
 
-EXPORT bool artboardSetText(WrappedArtboard* wrappedArtboard,
-                            const char* name,
-                            const char* value,
-                            const char* path)
+EXPORT bool artboardSetText(
+    WrappedArtboard* wrappedArtboard,
+    const char* name,
+    const char* value,
+    const char* path)
 {
-    if (wrappedArtboard == nullptr || name == nullptr || value == nullptr)
-    {
-        return false;
-    }
-    auto textRun = (path != nullptr)
-                       ? wrappedArtboard->artboard()->getTextRun(name, path)
-                       : wrappedArtboard->artboard()->find<TextValueRun>(name);
-    if (textRun == nullptr)
-    {
-        return false;
-    }
-    textRun->text(value);
-    return true;
+  if (wrappedArtboard == nullptr || name == nullptr || value == nullptr)
+  {
+    return false;
+  }
+  auto textRun = (path != nullptr)
+                     ? wrappedArtboard->artboard()->getTextRun(name, path)
+                     : wrappedArtboard->artboard()->find<TextValueRun>(name);
+  if (textRun == nullptr)
+  {
+    return false;
+  }
+  textRun->text(value);
+  return true;
 }
 
-EXPORT const char* artboardGetText(WrappedArtboard* wrappedArtboard,
-                                   const char* name,
-                                   const char* path)
+EXPORT const char* artboardGetText(
+    WrappedArtboard* wrappedArtboard,
+    const char* name,
+    const char* path)
 {
-    if (wrappedArtboard == nullptr || name == nullptr)
-    {
-        return nullptr;
-    }
-    auto textRun = (path != nullptr)
-                       ? wrappedArtboard->artboard()->getTextRun(name, path)
-                       : wrappedArtboard->artboard()->find<TextValueRun>(name);
-    if (textRun == nullptr)
-    {
-        return nullptr;
-    }
-    return textRun->text().c_str();
+  if (wrappedArtboard == nullptr || name == nullptr)
+  {
+    return nullptr;
+  }
+  auto textRun = (path != nullptr)
+                     ? wrappedArtboard->artboard()->getTextRun(name, path)
+                     : wrappedArtboard->artboard()->find<TextValueRun>(name);
+  if (textRun == nullptr)
+  {
+    return nullptr;
+  }
+  return textRun->text().c_str();
 }
 
 struct TextRunWithPath
 {
-    TextValueRun* textRun;
-    std::string path;
+  TextValueRun* textRun;
+  std::string path;
 };
 
 // Helper to recursively collect text runs from an artboard and all nested
 // artboards
-static void collectTextRunsRecursive(ArtboardInstance* artboard,
-                                     WrappedArtboard* wrappedArtboard,
-                                     std::vector<TextRunWithPath>& allTextRuns,
-                                     const std::string& currentPath)
+static void collectTextRunsRecursive(
+    ArtboardInstance* artboard,
+    WrappedArtboard* wrappedArtboard,
+    std::vector<TextRunWithPath>& allTextRuns,
+    const std::string& currentPath)
 {
-    if (!artboard)
+  if (!artboard)
+  {
+    return;
+  }
+  std::vector<TextValueRun*> textRuns = artboard->find<TextValueRun>();
+  for (auto* textRun : textRuns)
+  {
+    allTextRuns.push_back({textRun, currentPath});
+  }
+  std::vector<NestedArtboard*> nestedArtboards = artboard
+                                                     ->find<NestedArtboard>();
+  for (auto* nestedArtboard : nestedArtboards)
+  {
+    if (nestedArtboard)
     {
-        return;
-    }
-    std::vector<TextValueRun*> textRuns = artboard->find<TextValueRun>();
-    for (auto* textRun : textRuns)
-    {
-        allTextRuns.push_back({textRun, currentPath});
-    }
-    std::vector<NestedArtboard*> nestedArtboards =
-        artboard->find<NestedArtboard>();
-    for (auto* nestedArtboard : nestedArtboards)
-    {
-        if (nestedArtboard)
+      ArtboardInstance* nestedInstance = nestedArtboard->artboardInstance();
+      if (nestedInstance)
+      {
+        std::string nestedPath = currentPath;
+        if (!nestedPath.empty())
         {
-            ArtboardInstance* nestedInstance =
-                nestedArtboard->artboardInstance();
-            if (nestedInstance)
-            {
-                std::string nestedPath = currentPath;
-                if (!nestedPath.empty())
-                {
-                    nestedPath += "/";
-                }
-                nestedPath += nestedArtboard->name();
-
-                collectTextRunsRecursive(nestedInstance,
-                                         wrappedArtboard,
-                                         allTextRuns,
-                                         nestedPath);
-            }
+          nestedPath += "/";
         }
+        nestedPath += nestedArtboard->name();
+
+        collectTextRunsRecursive(
+            nestedInstance,
+            wrappedArtboard,
+            allTextRuns,
+            nestedPath);
+      }
     }
+  }
 }
 
 static WrappedTextValueRun** getAllTextRunsImpl(
     WrappedArtboard* wrappedArtboard,
     int* count)
 {
-    if (wrappedArtboard == nullptr || count == nullptr)
-    {
-        if (count)
-            *count = 0;
-        return nullptr;
-    }
+  if (wrappedArtboard == nullptr || count == nullptr)
+  {
+    if (count)
+      *count = 0;
+    return nullptr;
+  }
 
-    auto artboard = wrappedArtboard->artboard();
-    if (!artboard)
-    {
-        *count = 0;
-        return nullptr;
-    }
+  auto artboard = wrappedArtboard->artboard();
+  if (!artboard)
+  {
+    *count = 0;
+    return nullptr;
+  }
 
-    std::vector<TextRunWithPath> allTextRuns;
-    collectTextRunsRecursive(artboard, wrappedArtboard, allTextRuns, "");
+  std::vector<TextRunWithPath> allTextRuns;
+  collectTextRunsRecursive(artboard, wrappedArtboard, allTextRuns, "");
 
-    *count = static_cast<int>(allTextRuns.size());
-    if (allTextRuns.empty())
-    {
-        return nullptr;
-    }
+  *count = static_cast<int>(allTextRuns.size());
+  if (allTextRuns.empty())
+  {
+    return nullptr;
+  }
 
-    // Caller is responsible for freeing the array and deleting each wrapper
-    WrappedTextValueRun** arr = (WrappedTextValueRun**)std::malloc(
-        sizeof(WrappedTextValueRun*) * allTextRuns.size());
-    if (!arr)
-    {
-        *count = 0;
-        return nullptr;
-    }
-    for (size_t i = 0; i < allTextRuns.size(); ++i)
-    {
-        arr[i] = new WrappedTextValueRun(ref_rcp(wrappedArtboard),
-                                         allTextRuns[i].textRun,
-                                         allTextRuns[i].path);
-    }
-    return arr;
+  // Caller is responsible for freeing the array and deleting each wrapper
+  WrappedTextValueRun** arr = (WrappedTextValueRun**)std::malloc(
+      sizeof(WrappedTextValueRun*) * allTextRuns.size());
+  if (!arr)
+  {
+    *count = 0;
+    return nullptr;
+  }
+  for (size_t i = 0; i < allTextRuns.size(); ++i)
+  {
+    arr[i] = new WrappedTextValueRun(
+        ref_rcp(wrappedArtboard),
+        allTextRuns[i].textRun,
+        allTextRuns[i].path);
+  }
+  return arr;
 }
 
 #ifdef __EMSCRIPTEN__
 // WASM-specific struct to return array pointer and count together
 struct TextRunArrayResult
 {
-    WasmPtr array;
-    int count;
+  WasmPtr array;
+  int count;
 };
 
 EXPORT TextRunArrayResult artboardGetAllTextRuns(WasmPtr artboardPtr)
 {
-    WrappedArtboard* wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    int count = 0;
-    WrappedTextValueRun** arr = getAllTextRunsImpl(wrappedArtboard, &count);
-    TextRunArrayResult result;
-    result.array = (WasmPtr)arr;
-    result.count = count;
-    return result;
+  WrappedArtboard* wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  int count = 0;
+  WrappedTextValueRun** arr = getAllTextRunsImpl(wrappedArtboard, &count);
+  TextRunArrayResult result;
+  result.array = (WasmPtr)arr;
+  result.count = count;
+  return result;
 }
 #else
 // Native FFI version: Uses output parameter for count
@@ -4353,7 +4635,7 @@ EXPORT WrappedTextValueRun** artboardGetAllTextRuns(
     WrappedArtboard* wrappedArtboard,
     int* count)
 {
-    return getAllTextRunsImpl(wrappedArtboard, count);
+  return getAllTextRunsImpl(wrappedArtboard, count);
 }
 #endif
 
@@ -4361,89 +4643,92 @@ EXPORT WrappedTextValueRun** artboardGetAllTextRuns(
 // wrappers)
 EXPORT void freeTextRunsArray(WrappedTextValueRun** arr)
 {
-    if (arr != nullptr)
-    {
-        std::free(arr);
-    }
+  if (arr != nullptr)
+  {
+    std::free(arr);
+  }
 }
 
 // Helper function for WASM to get an element from the text runs array
-EXPORT WrappedTextValueRun* getTextRunFromArray(WrappedTextValueRun** arr,
-                                                int index)
+EXPORT WrappedTextValueRun* getTextRunFromArray(
+    WrappedTextValueRun** arr,
+    int index)
 {
-    if (arr == nullptr)
-    {
-        return nullptr;
-    }
-    return arr[index];
+  if (arr == nullptr)
+  {
+    return nullptr;
+  }
+  return arr[index];
 }
 
 EXPORT void deleteTextValueRun(WrappedTextValueRun* wrappedTextRun)
 {
-    if (wrappedTextRun == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete wrappedTextRun;
+  if (wrappedTextRun == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete wrappedTextRun;
 }
 
 EXPORT const char* textValueRunName(WrappedTextValueRun* wrappedTextRun)
 {
-    if (wrappedTextRun == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedTextRun->textValueRun()->name().c_str();
+  if (wrappedTextRun == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedTextRun->textValueRun()->name().c_str();
 }
 
 EXPORT const char* textValueRunText(WrappedTextValueRun* wrappedTextRun)
 {
-    if (wrappedTextRun == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedTextRun->textValueRun()->text().c_str();
+  if (wrappedTextRun == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedTextRun->textValueRun()->text().c_str();
 }
 
-EXPORT void textValueRunSetText(WrappedTextValueRun* wrappedTextRun,
-                                const char* text)
+EXPORT void textValueRunSetText(
+    WrappedTextValueRun* wrappedTextRun,
+    const char* text)
 {
-    if (wrappedTextRun == nullptr || text == nullptr)
-    {
-        return;
-    }
-    wrappedTextRun->textValueRun()->text(std::string(text));
+  if (wrappedTextRun == nullptr || text == nullptr)
+  {
+    return;
+  }
+  wrappedTextRun->textValueRun()->text(std::string(text));
 }
 
 EXPORT const char* textValueRunPath(WrappedTextValueRun* wrappedTextRun)
 {
-    if (wrappedTextRun == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedTextRun->path().c_str();
+  if (wrappedTextRun == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedTextRun->path().c_str();
 }
 
 EXPORT const char* stateMachineInstanceName(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return nullptr;
-    }
-    auto name = wrappedMachine->stateMachine()->name();
-    return toCString(name);
+  if (wrappedMachine == nullptr)
+  {
+    return nullptr;
+  }
+  auto name = wrappedMachine->stateMachine()->name();
+  return toCString(name);
 }
 
-EXPORT bool stateMachineInstanceAdvance(WrappedStateMachine* wrappedMachine,
-                                        float elapsedSeconds,
-                                        bool newFrame)
+EXPORT bool stateMachineInstanceAdvance(
+    WrappedStateMachine* wrappedMachine,
+    float elapsedSeconds,
+    bool newFrame)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return wrappedMachine->stateMachine()->advance(elapsedSeconds, newFrame);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return wrappedMachine->stateMachine()->advance(elapsedSeconds, newFrame);
 }
 
 // ---------------------------------------------------------------------------
@@ -4457,117 +4742,116 @@ static size_t g_lastSentStringTableSize = 0;
 static void flushTransitionRecordsToEventBuffer(
     const std::vector<rive::TransitionRecord>& records)
 {
-    if (records.empty())
-    {
-        return;
-    }
-    const std::vector<std::string>& stringTable =
-        rive::RiveProfile::instance().getStringTable();
-    std::lock_guard<std::mutex> lock(g_eventBufferMutex);
-    rive::VectorBinaryWriter ew(&g_eventBuffer);
+  if (records.empty())
+  {
+    return;
+  }
+  const std::vector<std::string>& stringTable = rive::RiveProfile::instance()
+                                                    .getStringTable();
+  std::lock_guard<std::mutex> lock(g_eventBufferMutex);
+  rive::VectorBinaryWriter ew(&g_eventBuffer);
 
-    // Emit 0x04 string table with new entries only
-    if (stringTable.size() > g_lastSentStringTableSize)
+  // Emit 0x04 string table with new entries only
+  if (stringTable.size() > g_lastSentStringTableSize)
+  {
+    const size_t count = stringTable.size();
+    ew.write(static_cast<uint8_t>(0x04));
+    std::vector<uint8_t> stPayload;
+    rive::VectorBinaryWriter stw(&stPayload);
+    stw.writeVarUint(static_cast<uint32_t>(count));
+    for (size_t i = 0; i < stringTable.size(); i++)
     {
-        const size_t count = stringTable.size();
-        ew.write(static_cast<uint8_t>(0x04));
-        std::vector<uint8_t> stPayload;
-        rive::VectorBinaryWriter stw(&stPayload);
-        stw.writeVarUint(static_cast<uint32_t>(count));
-        for (size_t i = 0; i < stringTable.size(); i++)
-        {
-            stw.write(stringTable[i]);
-        }
-        ew.writeVarUint(static_cast<uint32_t>(stPayload.size()));
-        ew.write(stPayload.data(), stPayload.size());
-        g_lastSentStringTableSize = stringTable.size();
+      stw.write(stringTable[i]);
     }
+    ew.writeVarUint(static_cast<uint32_t>(stPayload.size()));
+    ew.write(stPayload.data(), stPayload.size());
+    g_lastSentStringTableSize = stringTable.size();
+  }
 
-    // Group by (artboardId, smId)
-    std::map<std::pair<uint32_t, uint32_t>, std::vector<size_t>> groups;
-    for (size_t i = 0; i < records.size(); ++i)
+  // Group by (artboardId, smId)
+  std::map<std::pair<uint32_t, uint32_t>, std::vector<size_t>> groups;
+  for (size_t i = 0; i < records.size(); ++i)
+  {
+    const auto& rec = records[i];
+    groups[{rec.artboardId, rec.smId}].push_back(i);
+  }
+  for (const auto& kv : groups)
+  {
+    const auto& indices = kv.second;
+    std::vector<uint8_t> payload;
+    rive::VectorBinaryWriter pw(&payload);
+    writeInt64(pw, static_cast<int64_t>(records[indices[0]].tick));
+    pw.writeVarUint(static_cast<uint32_t>(indices.size()));
+    for (size_t idx : indices)
     {
-        const auto& rec = records[i];
-        groups[{rec.artboardId, rec.smId}].push_back(i);
-    }
-    for (const auto& kv : groups)
-    {
-        const auto& indices = kv.second;
-        std::vector<uint8_t> payload;
-        rive::VectorBinaryWriter pw(&payload);
-        writeInt64(pw, static_cast<int64_t>(records[indices[0]].tick));
-        pw.writeVarUint(static_cast<uint32_t>(indices.size()));
-        for (size_t idx : indices)
+      const auto& rec = records[idx];
+      std::vector<uint8_t> recPayload;
+      rive::VectorBinaryWriter rpw(&recPayload);
+      rpw.writeVarUint(rec.artboardId);
+      rpw.writeVarUint(rec.smId);
+      rpw.writeVarUint(rec.layerId);
+      rpw.writeVarUint(rec.fromStateId);
+      rpw.writeVarUint(rec.toStateId);
+      // Path: segment count, then per segment [segmentLength, type,
+      // nameId, optional index]
+      rpw.writeVarUint(static_cast<uint32_t>(rec.path.size()));
+      for (const auto& seg : rec.path)
+      {
+        std::vector<uint8_t> segPayload;
+        rive::VectorBinaryWriter spw(&segPayload);
+        spw.write(static_cast<uint8_t>(seg.type));
+        spw.writeVarUint(seg.nameId);
+        if (seg.type == 1)
         {
-            const auto& rec = records[idx];
-            std::vector<uint8_t> recPayload;
-            rive::VectorBinaryWriter rpw(&recPayload);
-            rpw.writeVarUint(rec.artboardId);
-            rpw.writeVarUint(rec.smId);
-            rpw.writeVarUint(rec.layerId);
-            rpw.writeVarUint(rec.fromStateId);
-            rpw.writeVarUint(rec.toStateId);
-            // Path: segment count, then per segment [segmentLength, type,
-            // nameId, optional index]
-            rpw.writeVarUint(static_cast<uint32_t>(rec.path.size()));
-            for (const auto& seg : rec.path)
-            {
-                std::vector<uint8_t> segPayload;
-                rive::VectorBinaryWriter spw(&segPayload);
-                spw.write(static_cast<uint8_t>(seg.type));
-                spw.writeVarUint(seg.nameId);
-                if (seg.type == 1)
-                {
-                    // Encode index: 0 = -1, otherwise index+1
-                    spw.writeVarUint(
-                        seg.index < 0 ? 0u
-                                      : static_cast<uint32_t>(seg.index + 1));
-                }
-                rpw.writeVarUint(static_cast<uint32_t>(segPayload.size()));
-                rpw.write(segPayload.data(), segPayload.size());
-            }
-            pw.writeVarUint(static_cast<uint32_t>(recPayload.size()));
-            pw.write(recPayload.data(), recPayload.size());
+          // Encode index: 0 = -1, otherwise index+1
+          spw.writeVarUint(
+              seg.index < 0 ? 0u : static_cast<uint32_t>(seg.index + 1));
         }
-        ew.write(static_cast<uint8_t>(0x03));
-        ew.writeVarUint(static_cast<uint32_t>(payload.size()));
-        ew.write(payload.data(), payload.size());
+        rpw.writeVarUint(static_cast<uint32_t>(segPayload.size()));
+        rpw.write(segPayload.data(), segPayload.size());
+      }
+      pw.writeVarUint(static_cast<uint32_t>(recPayload.size()));
+      pw.write(recPayload.data(), recPayload.size());
     }
+    ew.write(static_cast<uint8_t>(0x03));
+    ew.writeVarUint(static_cast<uint32_t>(payload.size()));
+    ew.write(payload.data(), payload.size());
+  }
 }
 
 static void flushListenerPerformChangeRecordsToEventBuffer(
     const std::vector<rive::ListenerPerformChangeRecord>& records)
 {
-    if (records.empty())
-    {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(g_eventBufferMutex);
-    rive::VectorBinaryWriter ew(&g_eventBuffer);
+  if (records.empty())
+  {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(g_eventBufferMutex);
+  rive::VectorBinaryWriter ew(&g_eventBuffer);
 
-    // 0x04 string table is already emitted by
-    // flushTransitionRecordsToEventBuffer when needed; we use the same table.
-    // Emit 0x05 listener perform change batch (length+content per entry).
-    std::vector<uint8_t> payload;
-    rive::VectorBinaryWriter pw(&payload);
-    writeInt64(pw, static_cast<int64_t>(records[0].tick));
-    pw.writeVarUint(static_cast<uint32_t>(records.size()));
-    for (const auto& rec : records)
-    {
-        std::vector<uint8_t> recPayload;
-        rive::VectorBinaryWriter rpw(&recPayload);
-        rpw.writeVarUint(rec.artboardId);
-        rpw.writeVarUint(rec.smId);
-        rpw.writeVarUint(rec.listenerNameId);
-        rpw.writeVarUint(rec.listenerType);
-        rpw.writeVarUint(rec.hitEvent);
-        rpw.writeVarUint(rec.pointerId);
-        pw.writeVarUint(static_cast<uint32_t>(recPayload.size()));
-        pw.write(recPayload.data(), recPayload.size());
-    }
-    ew.write(static_cast<uint8_t>(0x05));
-    ew.writeVarUint(static_cast<uint32_t>(payload.size()));
-    ew.write(payload.data(), payload.size());
+  // 0x04 string table is already emitted by
+  // flushTransitionRecordsToEventBuffer when needed; we use the same table.
+  // Emit 0x05 listener perform change batch (length+content per entry).
+  std::vector<uint8_t> payload;
+  rive::VectorBinaryWriter pw(&payload);
+  writeInt64(pw, static_cast<int64_t>(records[0].tick));
+  pw.writeVarUint(static_cast<uint32_t>(records.size()));
+  for (const auto& rec : records)
+  {
+    std::vector<uint8_t> recPayload;
+    rive::VectorBinaryWriter rpw(&recPayload);
+    rpw.writeVarUint(rec.artboardId);
+    rpw.writeVarUint(rec.smId);
+    rpw.writeVarUint(rec.listenerNameId);
+    rpw.writeVarUint(rec.listenerType);
+    rpw.writeVarUint(rec.hitEvent);
+    rpw.writeVarUint(rec.pointerId);
+    pw.writeVarUint(static_cast<uint32_t>(recPayload.size()));
+    pw.write(recPayload.data(), recPayload.size());
+  }
+  ew.write(static_cast<uint8_t>(0x05));
+  ew.writeVarUint(static_cast<uint32_t>(payload.size()));
+  ew.write(payload.data(), payload.size());
 }
 #endif
 
@@ -4575,30 +4859,29 @@ EXPORT bool stateMachineInstanceAdvanceAndApply(
     WrappedStateMachine* wrappedMachine,
     float elapsedSeconds)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    auto result =
-        wrappedMachine->stateMachine()->advanceAndApply(elapsedSeconds);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  auto result = wrappedMachine->stateMachine()->advanceAndApply(elapsedSeconds);
 #ifdef RIVE_MICROPROFILE
-    if (rive::RiveProfile::instance().isActive())
-    {
-        rive::RiveProfile::instance().flushTransitionRecords();
-        rive::RiveProfile::instance().flushListenerPerformChangeRecords();
-    }
+  if (rive::RiveProfile::instance().isActive())
+  {
+    rive::RiveProfile::instance().flushTransitionRecords();
+    rive::RiveProfile::instance().flushListenerPerformChangeRecords();
+  }
 #endif
-    return result;
+  return result;
 }
 
 EXPORT SizeType
 stateMachineInstanceStateChangedCount(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return 0;
-    }
-    return (SizeType)wrappedMachine->stateMachine()->stateChangedCount();
+  if (wrappedMachine == nullptr)
+  {
+    return 0;
+  }
+  return (SizeType)wrappedMachine->stateMachine()->stateChangedCount();
 }
 
 // Return state name/type string for the Nth changed state. Caller must free
@@ -4609,135 +4892,252 @@ EXPORT const char* stateMachineInstanceStateChangedNameByIndex(
     WrappedStateMachine* wrappedMachine,
     SizeType index)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return nullptr;
-    }
-    const LayerState* state =
-        wrappedMachine->stateMachine()->stateChangedByIndex(index);
-    if (state == nullptr)
-    {
-        return toCString(std::string("unknown"));
-    }
-    if (state->is<AnimationState>())
-    {
-        const AnimationState* animState = state->as<AnimationState>();
-        const LinearAnimation* animation = animState->animation();
-        if (animation != nullptr)
-        {
-            return toCString(animation->name());
-        }
-        return toCString(std::string("Unknown"));
-    }
-    if (state->is<EntryState>())
-        return toCString(std::string("entry"));
-    if (state->is<ExitState>())
-        return toCString(std::string("exit"));
-    if (state->is<AnyState>())
-        return toCString(std::string("any"));
-    if (state->is<BlendStateDirect>())
-        return toCString(std::string("blendDirect"));
-    if (state->is<BlendState1D>())
-        return toCString(std::string("blend1d"));
-    if (state->is<BlendState>())
-        return toCString(std::string("blend"));
+  if (wrappedMachine == nullptr)
+  {
+    return nullptr;
+  }
+  const LayerState* state = wrappedMachine->stateMachine()->stateChangedByIndex(
+      index);
+  if (state == nullptr)
+  {
     return toCString(std::string("unknown"));
+  }
+  if (state->is<AnimationState>())
+  {
+    const AnimationState* animState = state->as<AnimationState>();
+    const LinearAnimation* animation = animState->animation();
+    if (animation != nullptr)
+    {
+      return toCString(animation->name());
+    }
+    return toCString(std::string("Unknown"));
+  }
+  if (state->is<EntryState>())
+    return toCString(std::string("entry"));
+  if (state->is<ExitState>())
+    return toCString(std::string("exit"));
+  if (state->is<AnyState>())
+    return toCString(std::string("any"));
+  if (state->is<BlendStateDirect>())
+    return toCString(std::string("blendDirect"));
+  if (state->is<BlendState1D>())
+    return toCString(std::string("blend1d"));
+  if (state->is<BlendState>())
+    return toCString(std::string("blend"));
+  return toCString(std::string("unknown"));
 }
 
-EXPORT bool stateMachineInstanceHitTest(WrappedStateMachine* wrappedMachine,
-                                        float x,
-                                        float y)
+EXPORT bool stateMachineInstanceHitTest(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return wrappedMachine->stateMachine()->hitTest(Vec2D(x, y));
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return wrappedMachine->stateMachine()->hitTest(Vec2D(x, y));
+}
+
+EXPORT uint8_t stateMachineInstancePointerScroll(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    float deltaX,
+    float deltaY,
+    uint8_t phase,
+    uint8_t precise,
+    float timeStamp,
+    int pointerId)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  ScrollEvent event;
+  event.delta = Vec2D(deltaX, deltaY);
+  event.phase = (ScrollPhase)phase;
+  event.precise = precise != 0;
+  return (uint8_t)wrappedMachine->stateMachine()
+      ->pointerScroll(Vec2D(x, y), event, timeStamp, pointerId);
+}
+
+EXPORT uint8_t stateMachineInstanceWantsScroll(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    float deltaX,
+    float deltaY,
+    uint8_t phase,
+    uint8_t precise)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  ScrollEvent event;
+  event.delta = Vec2D(deltaX, deltaY);
+  event.phase = (ScrollPhase)phase;
+  event.precise = precise != 0;
+  return (uint8_t)wrappedMachine->stateMachine()->wantsScroll(
+      Vec2D(x, y),
+      event);
+}
+
+EXPORT uint8_t stateMachineInstanceHasScrollTargetAt(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->hasScrollTargetAt(
+      Vec2D(x, y));
+}
+
+EXPORT uint8_t stateMachineInstanceListensToButtonAt(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    int button)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->listensToButtonAt(
+      Vec2D(x, y),
+      (PointerButton)button);
+}
+
+EXPORT uint8_t stateMachineInstanceScrollOccludedAt(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->scrollOccludedAt(Vec2D(x, y));
 }
 
 EXPORT uint8_t
-stateMachineInstancePointerDown(WrappedStateMachine* wrappedMachine,
-                                float x,
-                                float y,
-                                int pointerId)
+stateMachineInstanceHasScrollLatch(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return (uint8_t)wrappedMachine->stateMachine()->pointerDown(Vec2D(x, y),
-                                                                pointerId);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->hasScrollLatch();
 }
 
-EXPORT uint8_t
-stateMachineInstancePointerExit(WrappedStateMachine* wrappedMachine,
-                                float x,
-                                float y,
-                                int pointerId)
+EXPORT void stateMachineInstanceCancelScroll(
+    WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return (uint8_t)wrappedMachine->stateMachine()->pointerExit(Vec2D(x, y),
-                                                                pointerId);
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
+  wrappedMachine->stateMachine()->cancelScroll();
 }
 
-EXPORT uint8_t
-stateMachineInstancePointerMove(WrappedStateMachine* wrappedMachine,
-                                float x,
-                                float y,
-                                float timeStamp,
-                                int pointerId)
+EXPORT uint8_t stateMachineInstancePointerDown(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    int pointerId,
+    int button)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return (uint8_t)wrappedMachine->stateMachine()->pointerMove(Vec2D(x, y),
-                                                                timeStamp,
-                                                                pointerId);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->pointerDown(
+      Vec2D(x, y),
+      pointerId,
+      (PointerButton)button);
 }
 
-EXPORT uint8_t
-stateMachineInstancePointerUp(WrappedStateMachine* wrappedMachine,
-                              float x,
-                              float y,
-                              int pointerId)
+EXPORT uint8_t stateMachineInstancePointerExit(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    int pointerId)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return (uint8_t)wrappedMachine->stateMachine()->pointerUp(Vec2D(x, y),
-                                                              pointerId);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->pointerExit(
+      Vec2D(x, y),
+      pointerId);
 }
 
-EXPORT uint8_t
-stateMachineInstanceDragStart(WrappedStateMachine* wrappedMachine,
-                              float x,
-                              float y,
-                              float timeStamp)
+EXPORT uint8_t stateMachineInstancePointerMove(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    float timeStamp,
+    int pointerId)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return (uint8_t)wrappedMachine->stateMachine()->dragStart(Vec2D(x, y),
-                                                              timeStamp);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->pointerMove(
+      Vec2D(x, y),
+      timeStamp,
+      pointerId);
 }
 
-EXPORT uint8_t stateMachineInstanceDragEnd(WrappedStateMachine* wrappedMachine,
-                                           float x,
-                                           float y,
-                                           float timeStamp)
+EXPORT uint8_t stateMachineInstancePointerUp(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    int pointerId,
+    int button)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return (uint8_t)wrappedMachine->stateMachine()->dragEnd(Vec2D(x, y),
-                                                            timeStamp);
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()->pointerUp(
+      Vec2D(x, y),
+      pointerId,
+      (PointerButton)button);
+}
+
+EXPORT uint8_t stateMachineInstanceDragStart(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    float timeStamp,
+    int button)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()
+      ->dragStart(Vec2D(x, y), timeStamp, true, 0, (PointerButton)button);
+}
+
+EXPORT uint8_t stateMachineInstanceDragEnd(
+    WrappedStateMachine* wrappedMachine,
+    float x,
+    float y,
+    float timeStamp,
+    int button)
+{
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return (uint8_t)wrappedMachine->stateMachine()
+      ->dragEnd(Vec2D(x, y), timeStamp, 0, (PointerButton)button);
 }
 
 EXPORT bool stateMachineInstanceSubmitGamepadsFromBuffer(
@@ -4745,13 +5145,13 @@ EXPORT bool stateMachineInstanceSubmitGamepadsFromBuffer(
     const uint8_t* data,
     uint64_t length)
 {
-    if (wrappedMachine == nullptr || data == nullptr)
-    {
-        return false;
-    }
-    return wrappedMachine->stateMachine()->submitGamepadsFromBuffer(
-        data,
-        static_cast<size_t>(length));
+  if (wrappedMachine == nullptr || data == nullptr)
+  {
+    return false;
+  }
+  return wrappedMachine->stateMachine()->submitGamepadsFromBuffer(
+      data,
+      static_cast<size_t>(length));
 }
 
 // Build a heap-owned `ListenerInvocation` from raw gamepad fields so the
@@ -4759,86 +5159,84 @@ EXPORT bool stateMachineInstanceSubmitGamepadsFromBuffer(
 // instances without re-decoding the wire format. Mirrors the
 // fillStandardIntent logic from `gamepad_batch.cpp:26-54` for event-kind
 // invocations.
-EXPORT void* makeGamepadInvocation(uint8_t kind,
-                                   int32_t deviceId,
-                                   uint64_t buttonMask,
-                                   const float* buttonValues,
-                                   uint64_t buttonCount,
-                                   const float* axes,
-                                   uint64_t axisCount,
-                                   uint8_t mapping,
-                                   uint8_t changeKind,
-                                   uint8_t changeIndex,
-                                   float changeValue)
+EXPORT void* makeGamepadInvocation(
+    uint8_t kind,
+    int32_t deviceId,
+    uint64_t buttonMask,
+    const float* buttonValues,
+    uint64_t buttonCount,
+    const float* axes,
+    uint64_t axisCount,
+    uint8_t mapping,
+    uint8_t changeKind,
+    uint8_t changeIndex,
+    float changeValue)
 {
-    if (kind == 2)
-    {
-        return new ListenerInvocation(
-            ListenerInvocation::gamepadDisconnected(deviceId));
-    }
-
-    GamepadSnapshot snapshot;
-    snapshot.deviceId = deviceId;
-    snapshot.buttonMask = buttonMask;
-    if (buttonValues != nullptr && buttonCount > 0)
-    {
-        snapshot.buttonValues.assign(buttonValues, buttonValues + buttonCount);
-    }
-    if (axes != nullptr && axisCount > 0)
-    {
-        snapshot.axes.assign(axes, axes + axisCount);
-    }
-    snapshot.mapping = static_cast<GamepadMappingKind>(mapping);
-
-    if (kind == 0)
-    {
-        return new ListenerInvocation(
-            ListenerInvocation::gamepadConnected(snapshot));
-    }
-
-    GamepadEventInvocation ev;
-    ev.fullState = snapshot;
-    ev.change.kind = changeKind == 0 ? GamepadInputChangeKind::button
-                                     : GamepadInputChangeKind::axis;
-    ev.change.index = changeIndex;
-    ev.change.value = changeValue;
-    ev.hasStandardButtonIntent = false;
-    ev.hasStandardAxisIntent = false;
-    if (snapshot.mapping == GamepadMappingKind::standard)
-    {
-        if (ev.change.kind == GamepadInputChangeKind::button)
-        {
-            if (ev.change.index <=
-                static_cast<uint8_t>(StandardGamepadButton::start))
-            {
-                ev.hasStandardButtonIntent = true;
-                ev.standardButton =
-                    static_cast<StandardGamepadButton>(ev.change.index);
-            }
-        }
-        else
-        {
-            if (ev.change.index <=
-                static_cast<uint8_t>(StandardGamepadAxis::rightTrigger))
-            {
-                ev.hasStandardAxisIntent = true;
-                ev.standardAxis =
-                    static_cast<StandardGamepadAxis>(ev.change.index);
-            }
-        }
-    }
+  if (kind == 2)
+  {
     return new ListenerInvocation(
-        ListenerInvocation::gamepadEvent(std::move(ev)));
+        ListenerInvocation::gamepadDisconnected(deviceId));
+  }
+
+  GamepadSnapshot snapshot;
+  snapshot.deviceId = deviceId;
+  snapshot.buttonMask = buttonMask;
+  if (buttonValues != nullptr && buttonCount > 0)
+  {
+    snapshot.buttonValues.assign(buttonValues, buttonValues + buttonCount);
+  }
+  if (axes != nullptr && axisCount > 0)
+  {
+    snapshot.axes.assign(axes, axes + axisCount);
+  }
+  snapshot.mapping = static_cast<GamepadMappingKind>(mapping);
+
+  if (kind == 0)
+  {
+    return new ListenerInvocation(
+        ListenerInvocation::gamepadConnected(snapshot));
+  }
+
+  GamepadEventInvocation ev;
+  ev.fullState = snapshot;
+  ev.change.kind = changeKind == 0 ? GamepadInputChangeKind::button
+                                   : GamepadInputChangeKind::axis;
+  ev.change.index = changeIndex;
+  ev.change.value = changeValue;
+  ev.hasStandardButtonIntent = false;
+  ev.hasStandardAxisIntent = false;
+  if (snapshot.mapping == GamepadMappingKind::standard)
+  {
+    if (ev.change.kind == GamepadInputChangeKind::button)
+    {
+      if (ev.change.index <= static_cast<uint8_t>(StandardGamepadButton::start))
+      {
+        ev.hasStandardButtonIntent = true;
+        ev.standardButton = static_cast<StandardGamepadButton>(ev.change.index);
+      }
+    }
+    else
+    {
+      if (ev.change.index <=
+          static_cast<uint8_t>(StandardGamepadAxis::rightTrigger))
+      {
+        ev.hasStandardAxisIntent = true;
+        ev.standardAxis = static_cast<StandardGamepadAxis>(ev.change.index);
+      }
+    }
+  }
+  return new ListenerInvocation(
+      ListenerInvocation::gamepadEvent(std::move(ev)));
 }
 
 EXPORT void deleteGamepadInvocation(void* invocation)
 {
-    if (invocation == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete static_cast<ListenerInvocation*>(invocation);
+  if (invocation == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete static_cast<ListenerInvocation*>(invocation);
 }
 
 // Dispatch a pre-built gamepad invocation to a state machine using the
@@ -4850,649 +5248,663 @@ EXPORT void stateMachineInstanceDispatchGamepadInvocation(
     WrappedStateMachine* wrappedMachine,
     void* invocation)
 {
-    if (wrappedMachine == nullptr || invocation == nullptr)
-    {
-        return;
-    }
-    auto* smi = wrappedMachine->stateMachine();
-    if (smi == nullptr)
-    {
-        return;
-    }
-    auto* inv = static_cast<ListenerInvocation*>(invocation);
-    ScriptedDrawable* dispatched = nullptr;
-    if (auto* fm = smi->focusManager())
-    {
-        fm->gamepadDispatch(*inv, &dispatched);
-    }
-    smi->broadcastGamepadToScriptedDrawables(*inv, dispatched);
+  if (wrappedMachine == nullptr || invocation == nullptr)
+  {
+    return;
+  }
+  auto* smi = wrappedMachine->stateMachine();
+  if (smi == nullptr)
+  {
+    return;
+  }
+  auto* inv = static_cast<ListenerInvocation*>(invocation);
+  ScriptedDrawable* dispatched = nullptr;
+  if (auto* fm = smi->focusManager())
+  {
+    fm->gamepadDispatch(*inv, &dispatched);
+  }
+  smi->broadcastGamepadToScriptedDrawables(*inv, dispatched);
 }
 
 EXPORT size_t
 stateMachineGetReportedEventCount(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return 0;
-    }
-    return wrappedMachine->stateMachine()->reportedEventCount();
+  if (wrappedMachine == nullptr)
+  {
+    return 0;
+  }
+  return wrappedMachine->stateMachine()->reportedEventCount();
 }
 
 #ifdef __EMSCRIPTEN__
 struct FlutterRuntimeReportedEvent
 {
-    WasmPtr event;
-    float secondsDelay;
-    uint16_t type;
+  WasmPtr event;
+  float secondsDelay;
+  uint16_t type;
 };
 struct FlutterRuntimeCustomProperty
 {
-    WasmPtr property;
-    WasmPtr name;
-    uint16_t type;
+  WasmPtr property;
+  WasmPtr name;
+  uint16_t type;
 };
 
-FlutterRuntimeReportedEvent stateMachineReportedEventAt(WasmPtr machinePtr,
-                                                        const size_t index)
+FlutterRuntimeReportedEvent stateMachineReportedEventAt(
+    WasmPtr machinePtr,
+    const size_t index)
 {
-    WrappedStateMachine* wrappedMachine = (WrappedStateMachine*)machinePtr;
-    if (wrappedMachine == nullptr || wrappedMachine->stateMachine() == nullptr)
-    {
-        return {(WasmPtr) nullptr, 0.0f, 0};
-    }
+  WrappedStateMachine* wrappedMachine = (WrappedStateMachine*)machinePtr;
+  if (wrappedMachine == nullptr || wrappedMachine->stateMachine() == nullptr)
+  {
+    return {(WasmPtr) nullptr, 0.0f, 0};
+  }
 
-    auto eventReport = wrappedMachine->stateMachine()->reportedEventAt(index);
-    auto wrappedEvent =
-        new WrappedEvent(ref_rcp(wrappedMachine), eventReport.event());
-    return {(WasmPtr)(wrappedEvent),
-            eventReport.secondsDelay(),
-            eventReport.event()->coreType()};
+  auto eventReport = wrappedMachine->stateMachine()->reportedEventAt(index);
+  auto wrappedEvent = new WrappedEvent(
+      ref_rcp(wrappedMachine),
+      eventReport.event());
+  return {
+      (WasmPtr)(wrappedEvent),
+      eventReport.secondsDelay(),
+      eventReport.event()->coreType()};
 }
 
-EXPORT FlutterRuntimeCustomProperty getEventCustomProperty(WasmPtr eventPtr,
-                                                           std::size_t index)
+EXPORT FlutterRuntimeCustomProperty
+getEventCustomProperty(WasmPtr eventPtr, std::size_t index)
 {
-    WrappedEvent* wrappedEvent = (WrappedEvent*)eventPtr;
-    if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr)
-    {
-        return {(WasmPtr) nullptr, (WasmPtr) nullptr, 0};
-    }
-    Event* event = wrappedEvent->event();
-    std::size_t count = 0;
-    for (auto child : event->children())
-    {
-        if (child->is<CustomProperty>() && count++ == index)
-        {
-            CustomProperty* property = child->as<CustomProperty>();
-            auto wrappedProperty =
-                new WrappedCustomProperty(ref_rcp(wrappedEvent), property);
-            return {(WasmPtr)(wrappedProperty),
-                    (WasmPtr)(property->name().c_str()),
-                    property->coreType()};
-        }
-    }
+  WrappedEvent* wrappedEvent = (WrappedEvent*)eventPtr;
+  if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr)
+  {
     return {(WasmPtr) nullptr, (WasmPtr) nullptr, 0};
+  }
+  Event* event = wrappedEvent->event();
+  std::size_t count = 0;
+  for (auto child : event->children())
+  {
+    if (child->is<CustomProperty>() && count++ == index)
+    {
+      CustomProperty* property = child->as<CustomProperty>();
+      auto wrappedProperty = new WrappedCustomProperty(
+          ref_rcp(wrappedEvent),
+          property);
+      return {
+          (WasmPtr)(wrappedProperty),
+          (WasmPtr)(property->name().c_str()),
+          property->coreType()};
+    }
+  }
+  return {(WasmPtr) nullptr, (WasmPtr) nullptr, 0};
 }
 #else
 struct FlutterRuntimeReportedEvent
 {
-    WrappedEvent* event;
-    float secondsDelay;
-    uint16_t type;
+  WrappedEvent* event;
+  float secondsDelay;
+  uint16_t type;
 };
 struct FlutterRuntimeCustomProperty
 {
-    WrappedCustomProperty* property;
-    const char* name;
-    uint16_t type;
+  WrappedCustomProperty* property;
+  const char* name;
+  uint16_t type;
 };
 
-EXPORT FlutterRuntimeReportedEvent
-stateMachineReportedEventAt(WrappedStateMachine* wrappedMachine,
-                            const size_t index)
+EXPORT FlutterRuntimeReportedEvent stateMachineReportedEventAt(
+    WrappedStateMachine* wrappedMachine,
+    const size_t index)
 {
-    if (wrappedMachine == nullptr || wrappedMachine->stateMachine() == nullptr)
-    {
-        return {nullptr, 0.0f, 0};
-    }
+  if (wrappedMachine == nullptr || wrappedMachine->stateMachine() == nullptr)
+  {
+    return {nullptr, 0.0f, 0};
+  }
 
-    auto eventReport = wrappedMachine->stateMachine()->reportedEventAt(index);
-    auto wrappedEvent =
-        new WrappedEvent(ref_rcp(wrappedMachine), eventReport.event());
-    return {wrappedEvent,
-            eventReport.secondsDelay(),
-            eventReport.event()->coreType()};
+  auto eventReport = wrappedMachine->stateMachine()->reportedEventAt(index);
+  auto wrappedEvent = new WrappedEvent(
+      ref_rcp(wrappedMachine),
+      eventReport.event());
+  return {
+      wrappedEvent,
+      eventReport.secondsDelay(),
+      eventReport.event()->coreType()};
 }
 
 EXPORT FlutterRuntimeCustomProperty
 getEventCustomProperty(WrappedEvent* wrappedEvent, std::size_t index)
 {
-    std::size_t count = 0;
-    for (auto child : wrappedEvent->event()->children())
+  std::size_t count = 0;
+  for (auto child : wrappedEvent->event()->children())
+  {
+    if (child->is<CustomProperty>() && count++ == index)
     {
-        if (child->is<CustomProperty>() && count++ == index)
-        {
-            CustomProperty* property = child->as<CustomProperty>();
-            auto wrappedPropety =
-                new WrappedCustomProperty(ref_rcp(wrappedEvent), property);
-            return {wrappedPropety,
-                    property->name().c_str(),
-                    property->coreType()};
-        }
+      CustomProperty* property = child->as<CustomProperty>();
+      auto wrappedPropety = new WrappedCustomProperty(
+          ref_rcp(wrappedEvent),
+          property);
+      return {wrappedPropety, property->name().c_str(), property->coreType()};
     }
-    return {nullptr, nullptr, 0};
+  }
+  return {nullptr, nullptr, 0};
 }
 #endif
 
 EXPORT void deleteEvent(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    wrappedEvent->unref();
+  if (wrappedEvent == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  wrappedEvent->unref();
 }
 
 EXPORT void deleteCustomProperty(WrappedCustomProperty* wrappedCustomProperty)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete wrappedCustomProperty;
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete wrappedCustomProperty;
 }
 
 EXPORT const char* getEventName(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedEvent->event()->name().c_str();
+  if (wrappedEvent == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedEvent->event()->name().c_str();
 }
 
 EXPORT uint32_t getOpenUrlEventTarget(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr)
-    {
-        return 0;
-    }
-    auto openUrlEvent = static_cast<rive::OpenUrlEvent*>(wrappedEvent->event());
-    if (openUrlEvent)
-    {
-        return openUrlEvent->targetValue();
-    }
+  if (wrappedEvent == nullptr)
+  {
     return 0;
+  }
+  auto openUrlEvent = static_cast<rive::OpenUrlEvent*>(wrappedEvent->event());
+  if (openUrlEvent)
+  {
+    return openUrlEvent->targetValue();
+  }
+  return 0;
 }
 
 EXPORT const char* getOpenUrlEventUrl(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr)
-    {
-        return nullptr;
-    }
-    auto openUrlEvent = static_cast<rive::OpenUrlEvent*>(wrappedEvent->event());
-    if (openUrlEvent)
-    {
-        return openUrlEvent->url().c_str();
-    }
+  if (wrappedEvent == nullptr)
+  {
     return nullptr;
+  }
+  auto openUrlEvent = static_cast<rive::OpenUrlEvent*>(wrappedEvent->event());
+  if (openUrlEvent)
+  {
+    return openUrlEvent->url().c_str();
+  }
+  return nullptr;
 }
 
 EXPORT uint32_t getAudioEventAssetId(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr ||
-        !wrappedEvent->event()->is<rive::AudioEvent>())
-    {
-        return 0;
-    }
-    return wrappedEvent->event()->as<rive::AudioEvent>()->assetId();
+  if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr ||
+      !wrappedEvent->event()->is<rive::AudioEvent>())
+  {
+    return 0;
+  }
+  return wrappedEvent->event()->as<rive::AudioEvent>()->assetId();
 }
 
 EXPORT const char* getAudioEventAssetName(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr ||
-        !wrappedEvent->event()->is<rive::AudioEvent>())
-    {
-        return nullptr;
-    }
-    auto asset = wrappedEvent->event()->as<rive::AudioEvent>()->asset();
-    if (asset == nullptr)
-    {
-        return nullptr;
-    }
-    return asset->name().c_str();
+  if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr ||
+      !wrappedEvent->event()->is<rive::AudioEvent>())
+  {
+    return nullptr;
+  }
+  auto asset = wrappedEvent->event()->as<rive::AudioEvent>()->asset();
+  if (asset == nullptr)
+  {
+    return nullptr;
+  }
+  return asset->name().c_str();
 }
 
 EXPORT float getAudioEventVolume(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr ||
-        !wrappedEvent->event()->is<rive::AudioEvent>())
-    {
-        return 0.0f;
-    }
-    auto asset = wrappedEvent->event()->as<rive::AudioEvent>()->asset();
-    if (asset == nullptr || !asset->is<rive::AudioAsset>())
-    {
-        return 0.0f;
-    }
-    return asset->as<rive::AudioAsset>()->volume();
+  if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr ||
+      !wrappedEvent->event()->is<rive::AudioEvent>())
+  {
+    return 0.0f;
+  }
+  auto asset = wrappedEvent->event()->as<rive::AudioEvent>()->asset();
+  if (asset == nullptr || !asset->is<rive::AudioAsset>())
+  {
+    return 0.0f;
+  }
+  return asset->as<rive::AudioAsset>()->volume();
 }
 
 EXPORT std::size_t getEventCustomPropertyCount(WrappedEvent* wrappedEvent)
 {
-    if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr)
+  if (wrappedEvent == nullptr || wrappedEvent->event() == nullptr)
+  {
+    return 0;
+  }
+  std::size_t count = 0;
+  for (auto child : wrappedEvent->event()->children())
+  {
+    if (child->is<CustomProperty>())
     {
-        return 0;
+      count++;
     }
-    std::size_t count = 0;
-    for (auto child : wrappedEvent->event()->children())
-    {
-        if (child->is<CustomProperty>())
-        {
-            count++;
-        }
-    }
-    return count;
+  }
+  return count;
 }
 
 EXPORT float getCustomPropertyNumber(WrappedCustomProperty* wrappedProperty)
 {
-    if (wrappedProperty == nullptr)
-    {
-        return 0.0f;
-    }
-    auto property = wrappedProperty->customProperty();
-    if (property->is<CustomPropertyNumber>())
-    {
-        return property->as<CustomPropertyNumber>()->propertyValue();
-    }
+  if (wrappedProperty == nullptr)
+  {
     return 0.0f;
+  }
+  auto property = wrappedProperty->customProperty();
+  if (property->is<CustomPropertyNumber>())
+  {
+    return property->as<CustomPropertyNumber>()->propertyValue();
+  }
+  return 0.0f;
 }
 
 EXPORT bool getCustomPropertyBoolean(WrappedCustomProperty* wrappedProperty)
 {
-    if (wrappedProperty == nullptr)
-    {
-        return false;
-    }
-    auto property = wrappedProperty->customProperty();
-    if (property->is<CustomPropertyBoolean>())
-    {
-        return property->as<CustomPropertyBoolean>()->propertyValue();
-    }
+  if (wrappedProperty == nullptr)
+  {
     return false;
+  }
+  auto property = wrappedProperty->customProperty();
+  if (property->is<CustomPropertyBoolean>())
+  {
+    return property->as<CustomPropertyBoolean>()->propertyValue();
+  }
+  return false;
 }
 
 EXPORT const char* getCustomPropertyString(
     WrappedCustomProperty* wrappedProperty)
 {
-    if (wrappedProperty == nullptr)
-    {
-        return nullptr;
-    }
-    auto property = wrappedProperty->customProperty();
-    if (property->is<CustomPropertyString>())
-    {
-        return property->as<CustomPropertyString>()->propertyValue().c_str();
-    }
+  if (wrappedProperty == nullptr)
+  {
     return nullptr;
+  }
+  auto property = wrappedProperty->customProperty();
+  if (property->is<CustomPropertyString>())
+  {
+    return property->as<CustomPropertyString>()->propertyValue().c_str();
+  }
+  return nullptr;
 }
 
 #if defined(__EMSCRIPTEN__)
 static void _webLayoutChanged(void* artboardPtr)
 {
-    auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
-    auto itr = _webLayoutChangedCallbacks.find(artboard);
-    if (itr != _webLayoutChangedCallbacks.end())
-    {
-        itr->second();
-    }
+  auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
+  auto itr = _webLayoutChangedCallbacks.find(artboard);
+  if (itr != _webLayoutChangedCallbacks.end())
+  {
+    itr->second();
+  }
 }
 
 static void _webLayoutDirty(void* artboardPtr)
 {
-    auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
-    auto itr = _webLayoutDirtyCallbacks.find(artboard);
-    if (itr != _webLayoutDirtyCallbacks.end())
-    {
-        itr->second();
-    }
+  auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
+  auto itr = _webLayoutDirtyCallbacks.find(artboard);
+  if (itr != _webLayoutDirtyCallbacks.end())
+  {
+    itr->second();
+  }
 }
 
 static void _webTransformDirty(void* artboardPtr)
 {
-    auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
-    auto itr = _webTransformDirtyCallbacks.find(artboard);
-    if (itr != _webTransformDirtyCallbacks.end())
-    {
-        itr->second();
-    }
+  auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
+  auto itr = _webTransformDirtyCallbacks.find(artboard);
+  if (itr != _webTransformDirtyCallbacks.end())
+  {
+    itr->second();
+  }
 }
 
 static void _webEvent(WrappedArtboard* artboard, uint32_t id)
 {
-    auto itr = _webEventCallbacks.find(artboard);
-    if (itr != _webEventCallbacks.end())
-    {
-        itr->second(id);
-    }
+  auto itr = _webEventCallbacks.find(artboard);
+  if (itr != _webEventCallbacks.end())
+  {
+    itr->second(id);
+  }
 }
 
 static void _webInputChanged(StateMachineInstance* stateMachine, uint64_t index)
 {
-    auto itr = _webInputChangedCallbacks.find(stateMachine);
-    if (itr != _webInputChangedCallbacks.end())
-    {
-        itr->second((uint32_t)index);
-    }
+  auto itr = _webInputChangedCallbacks.find(stateMachine);
+  if (itr != _webInputChangedCallbacks.end())
+  {
+    itr->second((uint32_t)index);
+  }
 }
 
 static void _webDataBindChanged()
 {
-    for (auto it : _webDataBindChangedCallbacks)
-    {
-        it.second();
-    }
+  for (auto it : _webDataBindChangedCallbacks)
+  {
+    it.second();
+  }
 }
 
 static uint8_t _webTestBounds(void* artboardPtr, float x, float y, bool skip)
 {
-    auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
-    auto itr = _webTestBoundsCallbacks.find(artboard);
-    if (itr != _webTestBoundsCallbacks.end())
-    {
-        auto result = itr->second(x, y, skip);
-        return result.as<uint8_t>();
-    }
-    return 1;
+  auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
+  auto itr = _webTestBoundsCallbacks.find(artboard);
+  if (itr != _webTestBoundsCallbacks.end())
+  {
+    auto result = itr->second(x, y, skip);
+    return result.as<uint8_t>();
+  }
+  return 1;
 }
 
 static uint8_t _webIsAncestor(void* artboardPtr, uint16_t artboardId)
 {
-    auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
-    auto itr = _webIsAncestorCallbacks.find(artboard);
-    if (itr != _webIsAncestorCallbacks.end())
-    {
-        auto result = itr->second(artboardId);
-        return result.as<uint8_t>();
-    }
-    return 1;
+  auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
+  auto itr = _webIsAncestorCallbacks.find(artboard);
+  if (itr != _webIsAncestorCallbacks.end())
+  {
+    auto result = itr->second(artboardId);
+    return result.as<uint8_t>();
+  }
+  return 1;
 }
 
 static float _webRootTransform(void* artboardPtr, float x, float y, bool xAxis)
 {
-    auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
-    auto itr = _webRootTransformCallbacks.find(artboard);
-    if (itr != _webRootTransformCallbacks.end())
-    {
-        auto result = itr->second(x, y, xAxis);
-        return result.as<float>();
-    }
-    return 0.0f;
+  auto artboard = static_cast<WrappedArtboard*>(artboardPtr);
+  auto itr = _webRootTransformCallbacks.find(artboard);
+  if (itr != _webRootTransformCallbacks.end())
+  {
+    auto result = itr->second(x, y, xAxis);
+    return result.as<float>();
+  }
+  return 0.0f;
 }
 
 EXPORT void setArtboardLayoutChangedCallback(
     WasmPtr artboardPtr,
     emscripten::val layoutChangedCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    if (layoutChangedCallback.isNull())
-    {
-        _webLayoutChangedCallbacks.erase(wrappedArtboard);
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  if (layoutChangedCallback.isNull())
+  {
+    _webLayoutChangedCallbacks.erase(wrappedArtboard);
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onLayoutChanged(nullptr);
+    wrappedArtboard->artboard()->onLayoutChanged(nullptr);
 #endif
-    }
-    else
-    {
-        _webLayoutChangedCallbacks[wrappedArtboard] = layoutChangedCallback;
+  }
+  else
+  {
+    _webLayoutChangedCallbacks[wrappedArtboard] = layoutChangedCallback;
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onLayoutChanged(_webLayoutChanged);
+    wrappedArtboard->artboard()->onLayoutChanged(_webLayoutChanged);
 #endif
-    }
+  }
 }
 
-EXPORT void setArtboardTestBoundsCallback(WasmPtr artboardPtr,
-                                          emscripten::val testBoundsCallback)
+EXPORT void setArtboardTestBoundsCallback(
+    WasmPtr artboardPtr,
+    emscripten::val testBoundsCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    if (testBoundsCallback.isNull())
-    {
-        _webTestBoundsCallbacks.erase(wrappedArtboard);
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  if (testBoundsCallback.isNull())
+  {
+    _webTestBoundsCallbacks.erase(wrappedArtboard);
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onTestBounds(nullptr);
+    wrappedArtboard->artboard()->onTestBounds(nullptr);
 #endif
-    }
-    else
-    {
-        _webTestBoundsCallbacks[wrappedArtboard] = testBoundsCallback;
+  }
+  else
+  {
+    _webTestBoundsCallbacks[wrappedArtboard] = testBoundsCallback;
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onTestBounds(_webTestBounds);
+    wrappedArtboard->artboard()->onTestBounds(_webTestBounds);
 #endif
-    }
+  }
 }
 
-EXPORT void setArtboardIsAncestorCallback(WasmPtr artboardPtr,
-                                          emscripten::val isAncestorCallback)
+EXPORT void setArtboardIsAncestorCallback(
+    WasmPtr artboardPtr,
+    emscripten::val isAncestorCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    if (isAncestorCallback.isNull())
-    {
-        _webIsAncestorCallbacks.erase(wrappedArtboard);
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  if (isAncestorCallback.isNull())
+  {
+    _webIsAncestorCallbacks.erase(wrappedArtboard);
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onIsAncestor(nullptr);
+    wrappedArtboard->artboard()->onIsAncestor(nullptr);
 #endif
-    }
-    else
-    {
-        _webIsAncestorCallbacks[wrappedArtboard] = isAncestorCallback;
+  }
+  else
+  {
+    _webIsAncestorCallbacks[wrappedArtboard] = isAncestorCallback;
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onIsAncestor(_webIsAncestor);
+    wrappedArtboard->artboard()->onIsAncestor(_webIsAncestor);
 #endif
-    }
+  }
 }
 
 EXPORT void setArtboardRootTransformCallback(
     WasmPtr artboardPtr,
     emscripten::val rootTransformCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    if (rootTransformCallback.isNull())
-    {
-        _webRootTransformCallbacks.erase(wrappedArtboard);
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  if (rootTransformCallback.isNull())
+  {
+    _webRootTransformCallbacks.erase(wrappedArtboard);
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onRootTransform(nullptr);
+    wrappedArtboard->artboard()->onRootTransform(nullptr);
 #endif
-    }
-    else
-    {
-        _webRootTransformCallbacks[wrappedArtboard] = rootTransformCallback;
+  }
+  else
+  {
+    _webRootTransformCallbacks[wrappedArtboard] = rootTransformCallback;
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onRootTransform(_webRootTransform);
+    wrappedArtboard->artboard()->onRootTransform(_webRootTransform);
 #endif
-    }
+  }
 }
 
-EXPORT void setArtboardLayoutDirtyCallback(WasmPtr artboardPtr,
-                                           emscripten::val layoutDirtyCallback)
+EXPORT void setArtboardLayoutDirtyCallback(
+    WasmPtr artboardPtr,
+    emscripten::val layoutDirtyCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    if (layoutDirtyCallback.isNull())
-    {
-        _webLayoutDirtyCallbacks.erase(wrappedArtboard);
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  if (layoutDirtyCallback.isNull())
+  {
+    _webLayoutDirtyCallbacks.erase(wrappedArtboard);
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onLayoutDirty(nullptr);
+    wrappedArtboard->artboard()->onLayoutDirty(nullptr);
 #endif
-    }
-    else
-    {
-        _webLayoutDirtyCallbacks[wrappedArtboard] = layoutDirtyCallback;
+  }
+  else
+  {
+    _webLayoutDirtyCallbacks[wrappedArtboard] = layoutDirtyCallback;
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onLayoutDirty(_webLayoutDirty);
+    wrappedArtboard->artboard()->onLayoutDirty(_webLayoutDirty);
 #endif
-    }
+  }
 }
 
 EXPORT void setArtboardTransformDirtyCallback(
     WasmPtr artboardPtr,
     emscripten::val transformDirtyCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    if (transformDirtyCallback.isNull())
-    {
-        _webTransformDirtyCallbacks.erase(wrappedArtboard);
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  if (transformDirtyCallback.isNull())
+  {
+    _webTransformDirtyCallbacks.erase(wrappedArtboard);
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onTransformDirty(nullptr);
+    wrappedArtboard->artboard()->onTransformDirty(nullptr);
 #endif
-    }
-    else
-    {
-        _webTransformDirtyCallbacks[wrappedArtboard] = transformDirtyCallback;
+  }
+  else
+  {
+    _webTransformDirtyCallbacks[wrappedArtboard] = transformDirtyCallback;
 #ifdef WITH_RIVE_TOOLS
-        wrappedArtboard->artboard()->onTransformDirty(_webTransformDirty);
+    wrappedArtboard->artboard()->onTransformDirty(_webTransformDirty);
 #endif
-    }
+  }
 }
 
-EXPORT void setArtboardEventCallback(WasmPtr artboardPtr,
-                                     emscripten::val eventCallback)
+EXPORT void setArtboardEventCallback(
+    WasmPtr artboardPtr,
+    emscripten::val eventCallback)
 {
-    auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  auto wrappedArtboard = (WrappedArtboard*)artboardPtr;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 
-    if (eventCallback.isNull())
-    {
-        _webEventCallbacks.erase(wrappedArtboard);
-        wrappedArtboard->m_eventCallback = nullptr;
-    }
-    else
-    {
-        _webEventCallbacks[wrappedArtboard] = eventCallback;
-        wrappedArtboard->m_eventCallback = _webEvent;
-    }
+  if (eventCallback.isNull())
+  {
+    _webEventCallbacks.erase(wrappedArtboard);
+    wrappedArtboard->m_eventCallback = nullptr;
+  }
+  else
+  {
+    _webEventCallbacks[wrappedArtboard] = eventCallback;
+    wrappedArtboard->m_eventCallback = _webEvent;
+  }
 }
 
-EXPORT void setStateMachineInputChangedCallback(WasmPtr smiPtr,
-                                                emscripten::val changedCallback)
+EXPORT void setStateMachineInputChangedCallback(
+    WasmPtr smiPtr,
+    emscripten::val changedCallback)
 {
-    auto wrappedMachine = (WrappedStateMachine*)smiPtr;
-    if (wrappedMachine == nullptr)
-    {
-        return;
-    }
-    auto smi = wrappedMachine->stateMachine();
-    if (changedCallback.isNull())
-    {
-        _webInputChangedCallbacks.erase(smi);
+  auto wrappedMachine = (WrappedStateMachine*)smiPtr;
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
+  auto smi = wrappedMachine->stateMachine();
+  if (changedCallback.isNull())
+  {
+    _webInputChangedCallbacks.erase(smi);
 #ifdef WITH_RIVE_TOOLS
-        smi->onInputChanged(nullptr);
+    smi->onInputChanged(nullptr);
 #endif
-    }
-    else
-    {
-        _webInputChangedCallbacks[smi] = changedCallback;
+  }
+  else
+  {
+    _webInputChangedCallbacks[smi] = changedCallback;
 #ifdef WITH_RIVE_TOOLS
-        smi->onInputChanged(_webInputChanged);
+    smi->onInputChanged(_webInputChanged);
 #endif
-    }
+  }
 }
 
 static void setStateMachineDataBindChangedCallback(
     WasmPtr smiPtr,
     emscripten::val changedCallback)
 {
-    auto wrappedMachine = (WrappedStateMachine*)smiPtr;
-    if (wrappedMachine == nullptr)
-    {
-        return;
-    }
-    auto smi = wrappedMachine->stateMachine();
-    if (changedCallback.isNull())
-    {
-        _webDataBindChangedCallbacks.erase(smi);
+  auto wrappedMachine = (WrappedStateMachine*)smiPtr;
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
+  auto smi = wrappedMachine->stateMachine();
+  if (changedCallback.isNull())
+  {
+    _webDataBindChangedCallbacks.erase(smi);
 #ifdef WITH_RIVE_TOOLS
-        smi->onDataBindChanged(nullptr);
+    smi->onDataBindChanged(nullptr);
 #endif
-    }
-    else
-    {
-        _webDataBindChangedCallbacks[smi] = changedCallback;
+  }
+  else
+  {
+    _webDataBindChangedCallbacks[smi] = changedCallback;
 #ifdef WITH_RIVE_TOOLS
-        smi->onDataBindChanged(_webDataBindChanged);
+    smi->onDataBindChanged(_webDataBindChanged);
 #endif
-    }
+  }
 }
 #else
-EXPORT void setArtboardEventCallback(WrappedArtboard* wrappedArtboard,
-                                     EventCallback eventCallback)
+EXPORT void setArtboardEventCallback(
+    WrappedArtboard* wrappedArtboard,
+    EventCallback eventCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    wrappedArtboard->m_eventCallback = eventCallback;
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  wrappedArtboard->m_eventCallback = eventCallback;
 }
 
 EXPORT void setArtboardLayoutChangedCallback(
     WrappedArtboard* wrappedArtboard,
     ArtboardCallback layoutChangedCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedArtboard->artboard()->onLayoutChanged(layoutChangedCallback);
+  wrappedArtboard->artboard()->onLayoutChanged(layoutChangedCallback);
 #endif
 }
 
-EXPORT void setArtboardTestBoundsCallback(WrappedArtboard* wrappedArtboard,
-                                          TestBoundsCallback testBoundsCallback)
+EXPORT void setArtboardTestBoundsCallback(
+    WrappedArtboard* wrappedArtboard,
+    TestBoundsCallback testBoundsCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedArtboard->artboard()->onTestBounds(testBoundsCallback);
+  wrappedArtboard->artboard()->onTestBounds(testBoundsCallback);
 #endif
 }
 
-EXPORT void setArtboardIsAncestorCallback(WrappedArtboard* wrappedArtboard,
-                                          IsAncestorCallback isAncestorCallback)
+EXPORT void setArtboardIsAncestorCallback(
+    WrappedArtboard* wrappedArtboard,
+    IsAncestorCallback isAncestorCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedArtboard->artboard()->onIsAncestor(isAncestorCallback);
+  wrappedArtboard->artboard()->onIsAncestor(isAncestorCallback);
 #endif
 }
 
@@ -5500,24 +5912,25 @@ EXPORT void setArtboardRootTransformCallback(
     WrappedArtboard* wrappedArtboard,
     RootTransformCallback rootTransformCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedArtboard->artboard()->onRootTransform(rootTransformCallback);
+  wrappedArtboard->artboard()->onRootTransform(rootTransformCallback);
 #endif
 }
 
-EXPORT void setArtboardLayoutDirtyCallback(WrappedArtboard* wrappedArtboard,
-                                           ArtboardCallback layoutDirtyCallback)
+EXPORT void setArtboardLayoutDirtyCallback(
+    WrappedArtboard* wrappedArtboard,
+    ArtboardCallback layoutDirtyCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedArtboard->artboard()->onLayoutDirty(layoutDirtyCallback);
+  wrappedArtboard->artboard()->onLayoutDirty(layoutDirtyCallback);
 #endif
 }
 
@@ -5525,12 +5938,12 @@ EXPORT void setArtboardTransformDirtyCallback(
     WrappedArtboard* wrappedArtboard,
     ArtboardCallback transformDirtyCallback)
 {
-    if (wrappedArtboard == nullptr)
-    {
-        return;
-    }
+  if (wrappedArtboard == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedArtboard->artboard()->onTransformDirty(transformDirtyCallback);
+  wrappedArtboard->artboard()->onTransformDirty(transformDirtyCallback);
 #endif
 }
 
@@ -5538,12 +5951,12 @@ EXPORT void setStateMachineInputChangedCallback(
     WrappedStateMachine* wrappedMachine,
     InputChanged changedCallback)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return;
-    }
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedMachine->stateMachine()->onInputChanged(changedCallback);
+  wrappedMachine->stateMachine()->onInputChanged(changedCallback);
 #endif
 }
 
@@ -5551,362 +5964,356 @@ EXPORT void setStateMachineDataBindChangedCallback(
     WrappedStateMachine* wrappedMachine,
     DataBindChanged changedCallback)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return;
-    }
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
 #ifdef WITH_RIVE_TOOLS
-    wrappedMachine->stateMachine()->onDataBindChanged(changedCallback);
+  wrappedMachine->stateMachine()->onDataBindChanged(changedCallback);
 #endif
 }
 #endif
 
 static void vmiNumberCallback(ViewModelInstanceNumber* vmi, float value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateNumber))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateNumber(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateNumber))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateNumber(pointer, value);
 }
 
 static void vmiBooleanCallback(ViewModelInstanceBoolean* vmi, bool value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateBoolean))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateBoolean(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateBoolean))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateBoolean(pointer, value);
 }
 
 static void vmiColorCallback(ViewModelInstanceColor* vmi, int value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateColor))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateColor(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateColor))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateColor(pointer, value);
 }
 
 static void vmiStringCallback(ViewModelInstanceString* vmi, const char* value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateString))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  if (!CALLBACK_VALID(g_viewModelUpdateString))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
 #if defined(__EMSCRIPTEN__)
-    g_viewModelUpdateString(pointer, std::string(value));
+  g_viewModelUpdateString(pointer, std::string(value));
 #else
-    g_viewModelUpdateString(pointer, value);
+  g_viewModelUpdateString(pointer, value);
 #endif
 }
 
 static void vmiTriggerCallback(ViewModelInstanceTrigger* vmi, uint32_t value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateTrigger))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateTrigger(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateTrigger))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateTrigger(pointer, value);
 }
 
 static void vmiListCallback(ViewModelInstanceList* vmi)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateList))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateList(pointer);
+  if (!CALLBACK_VALID(g_viewModelUpdateList))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateList(pointer);
 }
 
 static void vmiEnumCallback(ViewModelInstanceEnum* vmi, uint32_t value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateEnum))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateEnum(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateEnum))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateEnum(pointer, value);
 }
 
-static void vmiSymbolListIndexCallback(ViewModelInstanceSymbolListIndex* vmi,
-                                       uint32_t value)
+static void vmiSymbolListIndexCallback(
+    ViewModelInstanceSymbolListIndex* vmi,
+    uint32_t value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateSymbolListIndex))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateSymbolListIndex(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateSymbolListIndex))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateSymbolListIndex(pointer, value);
 }
 
 static void vmiAssetCallback(ViewModelInstanceAsset* vmi, uint32_t value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateAsset))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateAsset(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateAsset))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateAsset(pointer, value);
 }
 
 static void vmiArtboardCallback(ViewModelInstanceArtboard* vmi, uint32_t value)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateArtboard))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateArtboard(pointer, value);
+  if (!CALLBACK_VALID(g_viewModelUpdateArtboard))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateArtboard(pointer, value);
 }
 
 static void vmiViewModelCallback(ViewModelInstanceViewModel* vmi)
 {
-    if (!CALLBACK_VALID(g_viewModelUpdateViewModel))
-    {
-        return;
-    }
-    auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
-    g_viewModelUpdateViewModel(pointer);
+  if (!CALLBACK_VALID(g_viewModelUpdateViewModel))
+  {
+    return;
+  }
+  auto pointer = reinterpret_cast<std::uintptr_t>(vmi);
+  g_viewModelUpdateViewModel(pointer);
 }
 
 EXPORT ViewModelInstanceNumber* setViewModelInstanceNumberCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceNumber* viewModelInstanceNumber =
-        viewModelInstance->as<ViewModelInstanceNumber>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceNumber* viewModelInstanceNumber = viewModelInstance->as<
+      ViewModelInstanceNumber>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceNumber->onChanged(vmiNumberCallback);
+  viewModelInstanceNumber->onChanged(vmiNumberCallback);
 #endif
-    return viewModelInstanceNumber;
+  return viewModelInstanceNumber;
 }
 
 EXPORT ViewModelInstanceBoolean* setViewModelInstanceBooleanCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceBoolean* viewModelInstanceBoolean =
-        viewModelInstance->as<ViewModelInstanceBoolean>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceBoolean* viewModelInstanceBoolean = viewModelInstance->as<
+      ViewModelInstanceBoolean>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceBoolean->onChanged(vmiBooleanCallback);
+  viewModelInstanceBoolean->onChanged(vmiBooleanCallback);
 #endif
-    return viewModelInstanceBoolean;
+  return viewModelInstanceBoolean;
 }
 
 EXPORT ViewModelInstanceColor* setViewModelInstanceColorCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceColor* viewModelInstanceColor =
-        viewModelInstance->as<ViewModelInstanceColor>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceColor*
+      viewModelInstanceColor = viewModelInstance->as<ViewModelInstanceColor>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceColor->onChanged(vmiColorCallback);
+  viewModelInstanceColor->onChanged(vmiColorCallback);
 #endif
-    return viewModelInstanceColor;
+  return viewModelInstanceColor;
 }
 
 EXPORT ViewModelInstanceString* setViewModelInstanceStringCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceString* viewModelInstanceString =
-        viewModelInstance->as<ViewModelInstanceString>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceString* viewModelInstanceString = viewModelInstance->as<
+      ViewModelInstanceString>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceString->onChanged(vmiStringCallback);
+  viewModelInstanceString->onChanged(vmiStringCallback);
 #endif
-    return viewModelInstanceString;
+  return viewModelInstanceString;
 }
 
 EXPORT ViewModelInstanceTrigger* setViewModelInstanceTriggerCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceTrigger* viewModelInstanceTrigger =
-        viewModelInstance->as<ViewModelInstanceTrigger>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceTrigger* viewModelInstanceTrigger = viewModelInstance->as<
+      ViewModelInstanceTrigger>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceTrigger->onChanged(vmiTriggerCallback);
+  viewModelInstanceTrigger->onChanged(vmiTriggerCallback);
 #endif
-    return viewModelInstanceTrigger;
+  return viewModelInstanceTrigger;
 }
 
 EXPORT ViewModelInstanceList* setViewModelInstanceListCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceList* viewModelInstanceList =
-        viewModelInstance->as<ViewModelInstanceList>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceList*
+      viewModelInstanceList = viewModelInstance->as<ViewModelInstanceList>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceList->onChanged(vmiListCallback);
+  viewModelInstanceList->onChanged(vmiListCallback);
 #endif
-    return viewModelInstanceList;
+  return viewModelInstanceList;
 }
 
 EXPORT ViewModelInstanceViewModel* setViewModelInstanceViewModelCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceViewModel* viewModelInstanceViewModel =
-        viewModelInstance->as<ViewModelInstanceViewModel>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceViewModel*
+      viewModelInstanceViewModel = viewModelInstance
+                                       ->as<ViewModelInstanceViewModel>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceViewModel->onChanged(vmiViewModelCallback);
+  viewModelInstanceViewModel->onChanged(vmiViewModelCallback);
 #endif
-    return viewModelInstanceViewModel;
-}
-
-EXPORT void setViewModelInstanceAdvanced(
-    ViewModelInstanceValue* viewModelInstance)
-{
-    if (viewModelInstance == nullptr)
-    {
-        return;
-    }
-    viewModelInstance->advanced();
+  return viewModelInstanceViewModel;
 }
 
 EXPORT ViewModelInstanceEnum* setViewModelInstanceEnumCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceEnum* viewModelInstanceEnum =
-        viewModelInstance->as<ViewModelInstanceEnum>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceEnum*
+      viewModelInstanceEnum = viewModelInstance->as<ViewModelInstanceEnum>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceEnum->onChanged(vmiEnumCallback);
+  viewModelInstanceEnum->onChanged(vmiEnumCallback);
 #endif
-    return viewModelInstanceEnum;
+  return viewModelInstanceEnum;
 }
 
 EXPORT ViewModelInstanceSymbolListIndex*
 setViewModelInstanceSymbolListIndexCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceSymbolListIndex* viewModelInstanceSymbolListIndex =
-        viewModelInstance->as<ViewModelInstanceSymbolListIndex>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceSymbolListIndex*
+      viewModelInstanceSymbolListIndex = viewModelInstance->as<
+          ViewModelInstanceSymbolListIndex>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceSymbolListIndex->onChanged(vmiSymbolListIndexCallback);
+  viewModelInstanceSymbolListIndex->onChanged(vmiSymbolListIndexCallback);
 #endif
-    return viewModelInstanceSymbolListIndex;
+  return viewModelInstanceSymbolListIndex;
 }
 
 EXPORT ViewModelInstanceAsset* setViewModelInstanceAssetCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceAsset* viewModelInstanceAsset =
-        viewModelInstance->as<ViewModelInstanceAsset>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceAsset*
+      viewModelInstanceAsset = viewModelInstance->as<ViewModelInstanceAsset>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceAsset->onChanged(vmiAssetCallback);
+  viewModelInstanceAsset->onChanged(vmiAssetCallback);
 #endif
-    return viewModelInstanceAsset;
+  return viewModelInstanceAsset;
 }
 
 EXPORT ViewModelInstanceArtboard* setViewModelInstanceArtboardCallback(
     ViewModelInstanceValue* viewModelInstance)
 {
-    if (viewModelInstance == nullptr)
-    {
-        return nullptr;
-    }
-    ViewModelInstanceArtboard* viewModelInstanceArtboard =
-        viewModelInstance->as<ViewModelInstanceArtboard>();
+  if (viewModelInstance == nullptr)
+  {
+    return nullptr;
+  }
+  ViewModelInstanceArtboard* viewModelInstanceArtboard = viewModelInstance->as<
+      ViewModelInstanceArtboard>();
 #ifdef WITH_RIVE_TOOLS
-    viewModelInstanceArtboard->onChanged(vmiArtboardCallback);
+  viewModelInstanceArtboard->onChanged(vmiArtboardCallback);
 #endif
-    return viewModelInstanceArtboard;
+  return viewModelInstanceArtboard;
 }
 
 EXPORT void deleteArtboardInstance(WrappedArtboard* artboardInstance)
 {
-    if (artboardInstance == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    artboardInstance->deleteDataBinds();
-    artboardInstance->unref();
+  if (artboardInstance == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  artboardInstance->deleteDataBinds();
+  artboardInstance->unref();
 }
 
 EXPORT void deleteStateMachineInstance(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
+  if (wrappedMachine == nullptr)
+  {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
 #if defined(__EMSCRIPTEN__)
-    _webInputChangedCallbacks.erase(wrappedMachine->stateMachine());
+  _webInputChangedCallbacks.erase(wrappedMachine->stateMachine());
 #endif
-    wrappedMachine->unref();
+  wrappedMachine->unref();
 }
 
-EXPORT WrappedInput* stateMachineInput(WrappedStateMachine* wrappedMachine,
-                                       SizeType index)
+EXPORT WrappedInput* stateMachineInput(
+    WrappedStateMachine* wrappedMachine,
+    SizeType index)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return nullptr;
-    }
-    auto input = wrappedMachine->stateMachine()->input((size_t)index);
-    if (input == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedInput(ref_rcp(wrappedMachine), input);
+  if (wrappedMachine == nullptr)
+  {
+    return nullptr;
+  }
+  auto input = wrappedMachine->stateMachine()->input((size_t)index);
+  if (input == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedInput(ref_rcp(wrappedMachine), input);
 }
 
 EXPORT const char* stateMachineInputName(WrappedInput* wrappedInput)
 {
-    if (wrappedInput == nullptr)
-    {
-        return nullptr;
-    }
-    return wrappedInput->input()->name().c_str();
+  if (wrappedInput == nullptr)
+  {
+    return nullptr;
+  }
+  return wrappedInput->input()->name().c_str();
 }
 
 EXPORT uint16_t stateMachineInputType(WrappedInput* wrappedInput)
 {
-    if (wrappedInput == nullptr)
-    {
-        return 0;
-    }
-    return wrappedInput->input()->inputCoreType();
+  if (wrappedInput == nullptr)
+  {
+    return 0;
+  }
+  return wrappedInput->input()->inputCoreType();
 }
 
 EXPORT WrappedInput* stateMachineInstanceNumber(
@@ -5914,57 +6321,57 @@ EXPORT WrappedInput* stateMachineInstanceNumber(
     const char* name,
     const char* path)
 {
-    if (wrappedMachine == nullptr || name == nullptr)
-    {
-        return nullptr;
-    }
-    auto number =
-        (path != nullptr)
-            ? wrappedMachine->wrappedArtboard()->artboard()->getNumber(name,
-                                                                       path)
-            : wrappedMachine->stateMachine()->getNumber(name);
-    if (number == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedInput(ref_rcp(wrappedMachine), number);
+  if (wrappedMachine == nullptr || name == nullptr)
+  {
+    return nullptr;
+  }
+  auto number = (path != nullptr)
+                    ? wrappedMachine->wrappedArtboard()->artboard()->getNumber(
+                          name,
+                          path)
+                    : wrappedMachine->stateMachine()->getNumber(name);
+  if (number == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedInput(ref_rcp(wrappedMachine), number);
 }
 
 EXPORT bool stateMachineInstanceDone(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-    {
-        return false;
-    }
-    return !wrappedMachine->stateMachine()->needsAdvance();
+  if (wrappedMachine == nullptr)
+  {
+    return false;
+  }
+  return !wrappedMachine->stateMachine()->needsAdvance();
 }
 
 EXPORT float getNumberValue(WrappedInput* wrappedInput)
 {
-    if (wrappedInput == nullptr)
-    {
-        return 0.0f;
-    }
-    auto number = wrappedInput->number();
-    if (number == nullptr)
-    {
-        return 0.0f;
-    }
-    return number->value();
+  if (wrappedInput == nullptr)
+  {
+    return 0.0f;
+  }
+  auto number = wrappedInput->number();
+  if (number == nullptr)
+  {
+    return 0.0f;
+  }
+  return number->value();
 }
 
 EXPORT void setNumberValue(WrappedInput* wrappedInput, float value)
 {
-    if (wrappedInput == nullptr)
-    {
-        return;
-    }
-    auto number = wrappedInput->number();
-    if (number == nullptr)
-    {
-        return;
-    }
-    number->value(value);
+  if (wrappedInput == nullptr)
+  {
+    return;
+  }
+  auto number = wrappedInput->number();
+  if (number == nullptr)
+  {
+    return;
+  }
+  number->value(value);
 }
 
 EXPORT WrappedInput* stateMachineInstanceBoolean(
@@ -5972,47 +6379,48 @@ EXPORT WrappedInput* stateMachineInstanceBoolean(
     const char* name,
     const char* path)
 {
-    if (wrappedMachine == nullptr || name == nullptr)
-    {
-        return nullptr;
-    }
-    auto boolean =
-        (path != nullptr)
-            ? wrappedMachine->wrappedArtboard()->artboard()->getBool(name, path)
-            : wrappedMachine->stateMachine()->getBool(name);
-    if (boolean == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedInput(ref_rcp(wrappedMachine), boolean);
+  if (wrappedMachine == nullptr || name == nullptr)
+  {
+    return nullptr;
+  }
+  auto boolean = (path != nullptr)
+                     ? wrappedMachine->wrappedArtboard()->artboard()->getBool(
+                           name,
+                           path)
+                     : wrappedMachine->stateMachine()->getBool(name);
+  if (boolean == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedInput(ref_rcp(wrappedMachine), boolean);
 }
 
 EXPORT bool getBooleanValue(WrappedInput* wrappedInput)
 {
-    if (wrappedInput == nullptr)
-    {
-        return false;
-    }
-    auto boolean = wrappedInput->boolean();
-    if (boolean == nullptr)
-    {
-        return false;
-    }
-    return boolean->value();
+  if (wrappedInput == nullptr)
+  {
+    return false;
+  }
+  auto boolean = wrappedInput->boolean();
+  if (boolean == nullptr)
+  {
+    return false;
+  }
+  return boolean->value();
 }
 
 EXPORT void setBooleanValue(WrappedInput* wrappedInput, bool value)
 {
-    if (wrappedInput == nullptr)
-    {
-        return;
-    }
-    auto boolean = wrappedInput->boolean();
-    if (boolean == nullptr)
-    {
-        return;
-    }
-    boolean->value(value);
+  if (wrappedInput == nullptr)
+  {
+    return;
+  }
+  auto boolean = wrappedInput->boolean();
+  if (boolean == nullptr)
+  {
+    return;
+  }
+  boolean->value(value);
 }
 
 EXPORT WrappedInput* stateMachineInstanceTrigger(
@@ -6020,35 +6428,35 @@ EXPORT WrappedInput* stateMachineInstanceTrigger(
     const char* name,
     const char* path)
 {
-    if (wrappedMachine == nullptr || name == nullptr)
-    {
-        return nullptr;
-    }
-    auto trigger =
-        (path != nullptr)
-            ? wrappedMachine->wrappedArtboard()->artboard()->getTrigger(name,
-                                                                        path)
-            : wrappedMachine->stateMachine()->getTrigger(name);
-    if (trigger == nullptr)
-    {
-        return nullptr;
-    }
-    return new WrappedInput(ref_rcp(wrappedMachine), trigger);
+  if (wrappedMachine == nullptr || name == nullptr)
+  {
+    return nullptr;
+  }
+  auto trigger = (path != nullptr)
+                     ? wrappedMachine->wrappedArtboard()
+                           ->artboard()
+                           ->getTrigger(name, path)
+                     : wrappedMachine->stateMachine()->getTrigger(name);
+  if (trigger == nullptr)
+  {
+    return nullptr;
+  }
+  return new WrappedInput(ref_rcp(wrappedMachine), trigger);
 }
 
 EXPORT void fireTrigger(WrappedInput* wrappedInput)
 {
-    if (wrappedInput == nullptr)
-    {
-        return;
-    }
-    wrappedInput->fire();
+  if (wrappedInput == nullptr)
+  {
+    return;
+  }
+  wrappedInput->fire();
 }
 
 EXPORT void deleteInput(WrappedInput* wrappedInput)
 {
-    std::unique_lock<std::mutex> lock(g_deleteMutex);
-    delete wrappedInput;
+  std::unique_lock<std::mutex> lock(g_deleteMutex);
+  delete wrappedInput;
 }
 
 /// Factory callbacks to allow native to create and destroy Flutter
@@ -6066,725 +6474,798 @@ EXPORT void initBindingCallbacks(
     ViewModelUpdateList viewModelUpdateList,
     ViewModelUpdateViewModel viewModelUpdateViewModel)
 {
-    g_viewModelUpdateNumber = viewModelUpdateNumber;
-    g_viewModelUpdateBoolean = viewModelUpdateBoolean;
-    g_viewModelUpdateColor = viewModelUpdateColor;
-    g_viewModelUpdateString = viewModelUpdateString;
-    g_viewModelUpdateTrigger = viewModelUpdateTrigger;
-    g_viewModelUpdateEnum = viewModelUpdateEnum;
-    g_viewModelUpdateSymbolListIndex = viewModelUpdateSymbolListIndex;
-    g_viewModelUpdateAsset = viewModelUpdateAsset;
-    g_viewModelUpdateArtboard = viewModelUpdateArtboard;
-    g_viewModelUpdateList = viewModelUpdateList;
-    g_viewModelUpdateViewModel = viewModelUpdateViewModel;
+  g_viewModelUpdateNumber = viewModelUpdateNumber;
+  g_viewModelUpdateBoolean = viewModelUpdateBoolean;
+  g_viewModelUpdateColor = viewModelUpdateColor;
+  g_viewModelUpdateString = viewModelUpdateString;
+  g_viewModelUpdateTrigger = viewModelUpdateTrigger;
+  g_viewModelUpdateEnum = viewModelUpdateEnum;
+  g_viewModelUpdateSymbolListIndex = viewModelUpdateSymbolListIndex;
+  g_viewModelUpdateAsset = viewModelUpdateAsset;
+  g_viewModelUpdateArtboard = viewModelUpdateArtboard;
+  g_viewModelUpdateList = viewModelUpdateList;
+  g_viewModelUpdateViewModel = viewModelUpdateViewModel;
 }
 
 EXPORT RawText* makeRawText(Factory* factory)
 {
-    assert(factory != nullptr);
-    return new RawText(factory);
+  assert(factory != nullptr);
+  return new RawText(factory);
 }
 
 EXPORT void deleteRawText(RawText* rawText) { delete rawText; }
 
-EXPORT void rawTextAppend(RawText* rawText,
-                          const char* text,
-                          RenderPaint* paint,
-                          Font* font,
-                          float size,
-                          float lineHeight,
-                          float letterSpacing)
+EXPORT void rawTextAppend(
+    RawText* rawText,
+    const char* text,
+    RenderPaint* paint,
+    Font* font,
+    float size,
+    float lineHeight,
+    float letterSpacing)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    std::string textString = text;
-    rawText->append(textString,
-                    ref_rcp(paint),
-                    ref_rcp(font),
-                    size,
-                    lineHeight,
-                    letterSpacing);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  std::string textString = text;
+  rawText->append(
+      textString,
+      ref_rcp(paint),
+      ref_rcp(font),
+      size,
+      lineHeight,
+      letterSpacing);
 }
 
 EXPORT void rawTextClear(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->clear();
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->clear();
 }
 
 EXPORT bool rawTextIsEmpty(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return true;
-    }
-    return rawText->empty();
+  if (rawText == nullptr)
+  {
+    return true;
+  }
+  return rawText->empty();
 }
 
 EXPORT uint8_t rawTextGetSizing(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawText->sizing();
+  if (rawText == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawText->sizing();
 }
 
 EXPORT void rawTextSetSizing(RawText* rawText, uint8_t sizing)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->sizing((TextSizing)sizing);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->sizing((TextSizing)sizing);
 }
 
 EXPORT uint8_t rawTextGetOverflow(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawText->overflow();
+  if (rawText == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawText->overflow();
 }
 
 EXPORT void rawTextSetOverflow(RawText* rawText, uint8_t overflow)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->overflow((TextOverflow)overflow);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->overflow((TextOverflow)overflow);
 }
 
 EXPORT uint8_t rawTextGetAlign(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawText->align();
+  if (rawText == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawText->align();
 }
 
 EXPORT void rawTextSetAlign(RawText* rawText, uint8_t align)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->align((TextAlign)align);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->align((TextAlign)align);
 }
 
 EXPORT float rawTextGetMaxWidth(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return 0;
-    }
-    return rawText->maxWidth();
+  if (rawText == nullptr)
+  {
+    return 0;
+  }
+  return rawText->maxWidth();
 }
 
 EXPORT void rawTextSetMaxWidth(RawText* rawText, float maxWidth)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->maxWidth(maxWidth);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->maxWidth(maxWidth);
 }
 
 EXPORT float rawTextGetMaxHeight(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return 0;
-    }
-    return rawText->maxHeight();
+  if (rawText == nullptr)
+  {
+    return 0;
+  }
+  return rawText->maxHeight();
 }
 
 EXPORT void rawTextSetMaxHeight(RawText* rawText, float maxHeight)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->maxHeight(maxHeight);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->maxHeight(maxHeight);
 }
 
 EXPORT float rawTextGetParagraphSpacing(RawText* rawText)
 {
-    if (rawText == nullptr)
-    {
-        return 0;
-    }
-    return rawText->paragraphSpacing();
+  if (rawText == nullptr)
+  {
+    return 0;
+  }
+  return rawText->paragraphSpacing();
 }
 
 EXPORT void rawTextSetParagraphSpacing(RawText* rawText, float paragraphSpacing)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    rawText->paragraphSpacing(paragraphSpacing);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  rawText->paragraphSpacing(paragraphSpacing);
 }
 
 EXPORT void rawTextBounds(RawText* rawText, float* out)
 {
-    if (rawText == nullptr)
-    {
-        return;
-    }
-    AABB bounds = rawText->bounds();
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (rawText == nullptr)
+  {
+    return;
+  }
+  AABB bounds = rawText->bounds();
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
-EXPORT void rawTextRender(RawText* rawText,
-                          Renderer* renderer,
-                          RenderPaint* renderPaint)
+EXPORT void rawTextRender(
+    RawText* rawText,
+    Renderer* renderer,
+    RenderPaint* renderPaint)
 {
-    if (rawText == nullptr || renderer == nullptr)
-    {
-        return;
-    }
-    // null render paint is allowed
-    rawText->render(renderer, ref_rcp(renderPaint));
+  if (rawText == nullptr || renderer == nullptr)
+  {
+    return;
+  }
+  // null render paint is allowed
+  rawText->render(renderer, ref_rcp(renderPaint));
 }
 
 EXPORT RawTextInput* makeRawTextInput() { return new RawTextInput(); }
 
 EXPORT void deleteRawTextInput(RawTextInput* rawTextInput)
 {
-    delete rawTextInput;
+  delete rawTextInput;
 }
 
 EXPORT float rawTextInputGetFontSize(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->fontSize();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->fontSize();
 }
 
 EXPORT void rawTextInputSetFontSize(RawTextInput* rawTextInput, float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->fontSize(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->fontSize(value);
 }
 
 EXPORT void rawTextInputSetFont(RawTextInput* rawTextInput, Font* font)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->font(ref_rcp(font));
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->font(ref_rcp(font));
 }
 
 EXPORT float rawTextInputGetMaxWidth(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->maxWidth();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->maxWidth();
 }
 
 EXPORT void rawTextInputSetMaxWidth(RawTextInput* rawTextInput, float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->maxWidth(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->maxWidth(value);
 }
 
 EXPORT float rawTextInputGetMaxHeight(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->maxHeight();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->maxHeight();
 }
 
 EXPORT void rawTextInputSetMaxHeight(RawTextInput* rawTextInput, float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->maxHeight(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->maxHeight(value);
 }
 
 EXPORT float rawTextInputGetParagraphSpacing(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->paragraphSpacing();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->paragraphSpacing();
 }
 
-EXPORT void rawTextInputSetParagraphSpacing(RawTextInput* rawTextInput,
-                                            float value)
+EXPORT void rawTextInputSetParagraphSpacing(
+    RawTextInput* rawTextInput,
+    float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->paragraphSpacing(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->paragraphSpacing(value);
 }
 
 EXPORT float rawTextInputGetSelectionCornerRadius(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->selectionCornerRadius();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->selectionCornerRadius();
 }
 
-EXPORT void rawTextInputSetSelectionCornerRadius(RawTextInput* rawTextInput,
-                                                 float value)
+EXPORT void rawTextInputSetSelectionCornerRadius(
+    RawTextInput* rawTextInput,
+    float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->selectionCornerRadius(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->selectionCornerRadius(value);
 }
 
 EXPORT bool rawTextInputGetSeparateSelectionText(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->separateSelectionText();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->separateSelectionText();
 }
 
 EXPORT void rawTextInputSetText(RawTextInput* rawTextInput, const char* value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->text(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->text(value);
 }
 
-EXPORT void rawTextInputSetTextPreserveCursor(RawTextInput* rawTextInput,
-                                              const char* value)
+EXPORT void rawTextInputSetTextPreserveCursor(
+    RawTextInput* rawTextInput,
+    const char* value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->textPreserveCursor(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->textPreserveCursor(value);
 }
 
 EXPORT const char* rawTextInputGetText(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return nullptr;
-    }
-    auto text = rawTextInput->text();
-    return toCString(text);
+  if (rawTextInput == nullptr)
+  {
+    return nullptr;
+  }
+  auto text = rawTextInput->text();
+  return toCString(text);
 }
 
 EXPORT size_t rawTextInputLength(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0;
-    }
-    return rawTextInput->length();
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return rawTextInput->length();
 }
 
-EXPORT void rawTextInputSetSeparateSelectionText(RawTextInput* rawTextInput,
-                                                 bool value)
+EXPORT void rawTextInputSetSeparateSelectionText(
+    RawTextInput* rawTextInput,
+    bool value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->separateSelectionText(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->separateSelectionText(value);
 }
 
 EXPORT bool rawTextInputGetObscured(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return false;
-    }
-    return rawTextInput->obscured();
+  if (rawTextInput == nullptr)
+  {
+    return false;
+  }
+  return rawTextInput->obscured();
 }
 
 EXPORT void rawTextInputSetObscured(RawTextInput* rawTextInput, bool value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->obscured(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->obscured(value);
+}
+
+EXPORT bool rawTextInputGetHugsWidth(RawTextInput* rawTextInput)
+{
+  if (rawTextInput == nullptr)
+  {
+    return false;
+  }
+  return rawTextInput->hugsWidth();
+}
+
+EXPORT void rawTextInputSetHugsWidth(RawTextInput* rawTextInput, bool value)
+{
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->hugsWidth(value);
+}
+
+EXPORT uint32_t rawTextInputGetMaxCharacters(RawTextInput* rawTextInput)
+{
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return rawTextInput->maxCharacters();
+}
+
+EXPORT void rawTextInputSetMaxCharacters(
+    RawTextInput* rawTextInput,
+    uint32_t value)
+{
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->maxCharacters(value);
+}
+
+EXPORT uint32_t rawTextInputGetMaxLines(RawTextInput* rawTextInput)
+{
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return rawTextInput->maxLines();
+}
+
+EXPORT void rawTextInputSetMaxLines(RawTextInput* rawTextInput, uint32_t value)
+{
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->maxLines(value);
 }
 
 EXPORT uint8_t rawTextInputGetSizing(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawTextInput->sizing();
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawTextInput->sizing();
 }
 
 EXPORT void rawTextInputSetSizing(RawTextInput* rawTextInput, uint8_t value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->sizing((TextSizing)value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->sizing((TextSizing)value);
 }
 
 EXPORT uint8_t rawTextInputGetOverflow(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawTextInput->overflow();
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawTextInput->overflow();
 }
 
 EXPORT void rawTextInputSetOverflow(RawTextInput* rawTextInput, uint8_t value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->overflow((TextOverflow)value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->overflow((TextOverflow)value);
 }
 
 EXPORT uint8_t rawTextInputGetAlign(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawTextInput->align();
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawTextInput->align();
 }
 
 EXPORT void rawTextInputSetAlign(RawTextInput* rawTextInput, uint8_t value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->align((TextAlign)value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->align((TextAlign)value);
 }
 
 EXPORT float rawTextInputGetAlignWidth(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->alignWidth();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->alignWidth();
 }
 
 EXPORT void rawTextInputSetAlignWidth(RawTextInput* rawTextInput, float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->alignWidth(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->alignWidth(value);
 }
 
 EXPORT uint8_t rawTextInputGetVerticalAlign(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawTextInput->verticalAlign();
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawTextInput->verticalAlign();
 }
 
-EXPORT void rawTextInputSetVerticalAlign(RawTextInput* rawTextInput,
-                                         uint8_t value)
+EXPORT void rawTextInputSetVerticalAlign(
+    RawTextInput* rawTextInput,
+    uint8_t value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->verticalAlign((VerticalTextAlign)value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->verticalAlign((VerticalTextAlign)value);
 }
 
 EXPORT float rawTextInputGetAlignHeight(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0.0f;
-    }
-    return rawTextInput->alignHeight();
+  if (rawTextInput == nullptr)
+  {
+    return 0.0f;
+  }
+  return rawTextInput->alignHeight();
 }
 
 EXPORT void rawTextInputSetAlignHeight(RawTextInput* rawTextInput, float value)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->alignHeight(value);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->alignHeight(value);
 }
 
 EXPORT void rawTextInputBounds(RawTextInput* rawTextInput, float* out)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    AABB bounds = rawTextInput->bounds();
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  AABB bounds = rawTextInput->bounds();
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
-EXPORT void rawTextInputMeasure(RawTextInput* rawTextInput,
-                                float maxWidth,
-                                float maxHeight,
-                                float* out)
+EXPORT void rawTextInputMeasure(
+    RawTextInput* rawTextInput,
+    float maxWidth,
+    float maxHeight,
+    float* out)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    AABB bounds = rawTextInput->measure(maxWidth, maxHeight);
-    memcpy(out, &bounds, sizeof(float) * 4);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  AABB bounds = rawTextInput->measure(maxWidth, maxHeight);
+  memcpy(out, &bounds, sizeof(float) * 4);
 }
 
-EXPORT uint8_t rawTextInputUpdate(RawTextInput* rawTextInput,
-                                  rive::Factory* factory)
+EXPORT uint8_t
+rawTextInputUpdate(RawTextInput* rawTextInput, rive::Factory* factory)
 {
-    if (rawTextInput == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)rawTextInput->update(factory);
+  if (rawTextInput == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)rawTextInput->update(factory);
 }
 
-EXPORT rive::RenderPath* rawTextTextPath(RawTextInput* rawTextInput,
-                                         rive::Factory* factory)
+EXPORT rive::RenderPath* rawTextTextPath(
+    RawTextInput* rawTextInput,
+    rive::Factory* factory)
 {
-    if (rawTextInput == nullptr)
-    {
-        return nullptr;
-    }
-    auto path = rawTextInput->textPath()->renderPath(factory);
-    path->ref();
-    return path;
+  if (rawTextInput == nullptr)
+  {
+    return nullptr;
+  }
+  auto path = rawTextInput->textPath()->renderPath(factory);
+  path->ref();
+  return path;
 }
 
-EXPORT rive::RenderPath* rawTextSelectedTextPath(RawTextInput* rawTextInput,
-                                                 rive::Factory* factory)
+EXPORT rive::RenderPath* rawTextSelectedTextPath(
+    RawTextInput* rawTextInput,
+    rive::Factory* factory)
 {
-    if (rawTextInput == nullptr)
-    {
-        return nullptr;
-    }
-    auto path = rawTextInput->selectedTextPath()->renderPath(factory);
-    path->ref();
-    return path;
+  if (rawTextInput == nullptr)
+  {
+    return nullptr;
+  }
+  auto path = rawTextInput->selectedTextPath()->renderPath(factory);
+  path->ref();
+  return path;
 }
 
-EXPORT rive::RenderPath* rawTextCursorPath(RawTextInput* rawTextInput,
-                                           rive::Factory* factory)
+EXPORT rive::RenderPath* rawTextCursorPath(
+    RawTextInput* rawTextInput,
+    rive::Factory* factory)
 {
-    if (rawTextInput == nullptr)
-    {
-        return nullptr;
-    }
-    auto path = rawTextInput->cursorPath()->renderPath(factory);
-    path->ref();
-    return path;
+  if (rawTextInput == nullptr)
+  {
+    return nullptr;
+  }
+  auto path = rawTextInput->cursorPath()->renderPath(factory);
+  path->ref();
+  return path;
 }
 
-EXPORT rive::RenderPath* rawTextSelectionPath(RawTextInput* rawTextInput,
-                                              rive::Factory* factory)
+EXPORT rive::RenderPath* rawTextSelectionPath(
+    RawTextInput* rawTextInput,
+    rive::Factory* factory)
 {
-    if (rawTextInput == nullptr)
-    {
-        return nullptr;
-    }
-    auto path = rawTextInput->selectionPath()->renderPath(factory);
-    path->ref();
-    return path;
+  if (rawTextInput == nullptr)
+  {
+    return nullptr;
+  }
+  auto path = rawTextInput->selectionPath()->renderPath(factory);
+  path->ref();
+  return path;
 }
 
 EXPORT rive::RenderPath* rawTextClipPath(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return nullptr;
-    }
-    auto path = rawTextInput->clipRenderPath().get();
-    path->ref();
-    return path;
+  if (rawTextInput == nullptr)
+  {
+    return nullptr;
+  }
+  auto path = rawTextInput->clipRenderPath().get();
+  path->ref();
+  return path;
 }
 
 EXPORT void rawTextInsertText(RawTextInput* rawTextInput, const char* text)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->insert(text);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->insert(text);
 }
 
-EXPORT void rawTextInsertCodePoint(RawTextInput* rawTextInput,
-                                   uint32_t codePoint)
+EXPORT void rawTextInsertCodePoint(
+    RawTextInput* rawTextInput,
+    uint32_t codePoint)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->insert((Unichar)codePoint);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->insert((Unichar)codePoint);
 }
 
 EXPORT void rawTextErase(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->erase();
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->erase();
 }
 
 EXPORT void rawTextBackspace(RawTextInput* rawTextInput, int32_t direction)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->backspace(direction);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->backspace(direction);
 }
 
-EXPORT void rawTextCursorLeft(RawTextInput* rawTextInput,
-                              uint8_t boundary,
-                              bool select)
+EXPORT void rawTextCursorLeft(
+    RawTextInput* rawTextInput,
+    uint8_t boundary,
+    bool select)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->cursorLeft((rive::CursorBoundary)boundary, select);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->cursorLeft((rive::CursorBoundary)boundary, select);
 }
 
-EXPORT void rawTextCursorRight(RawTextInput* rawTextInput,
-                               uint8_t boundary,
-                               bool select)
+EXPORT void rawTextCursorRight(
+    RawTextInput* rawTextInput,
+    uint8_t boundary,
+    bool select)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->cursorRight((rive::CursorBoundary)boundary, select);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->cursorRight((rive::CursorBoundary)boundary, select);
 }
 
 EXPORT void rawTextCursorUp(RawTextInput* rawTextInput, bool select)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->cursorUp(select);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->cursorUp(select);
 }
 
 EXPORT void rawTextCursorDown(RawTextInput* rawTextInput, bool select)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->cursorDown(select);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->cursorDown(select);
 }
 
 EXPORT void rawTextSelectWord(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->selectWord();
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->selectWord();
 }
 
 EXPORT bool rawTextHasSelection(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return false;
-    }
-    return rawTextInput->cursor().hasSelection();
+  if (rawTextInput == nullptr)
+  {
+    return false;
+  }
+  return rawTextInput->cursor().hasSelection();
 }
 
 EXPORT void rawTextClearSelection(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->clearSelection();
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->clearSelection();
 }
 
 EXPORT void rawTextUndo(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->undo();
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->undo();
 }
 
 EXPORT void rawTextRedo(RawTextInput* rawTextInput)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->redo();
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->redo();
 }
 
-EXPORT void rawTextMoveCursorTo(RawTextInput* rawTextInput,
-                                float x,
-                                float y,
-                                bool select)
+EXPORT void rawTextMoveCursorTo(
+    RawTextInput* rawTextInput,
+    float x,
+    float y,
+    bool select)
 {
-    if (rawTextInput == nullptr)
-    {
-        return;
-    }
-    rawTextInput->moveCursorTo(Vec2D(x, y), select);
+  if (rawTextInput == nullptr)
+  {
+    return;
+  }
+  rawTextInput->moveCursorTo(Vec2D(x, y), select);
 }
 
 EXPORT bool rawTextInputCursorPosition(RawTextInput* rawTextInput, float* out)
 {
-    if (rawTextInput == nullptr)
-    {
-        return false;
-    }
-    auto position = rawTextInput->cursorVisualPosition();
-    out[0] = position.x();
-    out[1] = position.top();
-    out[2] = position.bottom();
-    return position.found();
+  if (rawTextInput == nullptr)
+  {
+    return false;
+  }
+  auto position = rawTextInput->cursorVisualPosition();
+  out[0] = position.x();
+  out[1] = position.top();
+  out[2] = position.bottom();
+  return position.found();
 }
 
 // ============================================================================
@@ -6795,61 +7276,62 @@ EXPORT bool rawTextInputCursorPosition(RawTextInput* rawTextInput, float* out)
 
 static void flushProfileAndMergeTransitionBuffer()
 {
-    rive::RiveProfile::instance().flushFrameDataTo(g_profileBuffer);
-    std::lock_guard<std::mutex> lock(g_eventBufferMutex);
-    if (!g_eventBuffer.empty())
-    {
-        g_profileBuffer.insert(g_profileBuffer.end(),
-                               g_eventBuffer.begin(),
-                               g_eventBuffer.end());
-        g_eventBuffer.clear();
-    }
+  rive::RiveProfile::instance().flushFrameDataTo(g_profileBuffer);
+  std::lock_guard<std::mutex> lock(g_eventBufferMutex);
+  if (!g_eventBuffer.empty())
+  {
+    g_profileBuffer.insert(
+        g_profileBuffer.end(),
+        g_eventBuffer.begin(),
+        g_eventBuffer.end());
+    g_eventBuffer.clear();
+  }
 }
 
 EXPORT bool profilerStop()
 {
-    if (!rive::RiveProfile::instance().isActive())
-    {
-        return false;
-    }
-    rive::RiveProfile::instance().stop();
-    flushProfileAndMergeTransitionBuffer();
-    g_profileBuffer.push_back(0x00);
-    return true;
+  if (!rive::RiveProfile::instance().isActive())
+  {
+    return false;
+  }
+  rive::RiveProfile::instance().stop();
+  flushProfileAndMergeTransitionBuffer();
+  g_profileBuffer.push_back(0x00);
+  return true;
 }
 
 EXPORT bool profilerStart()
 {
-    if (rive::RiveProfile::instance().isActive())
-    {
-        return false;
-    }
-    g_profileBuffer.clear();
-    {
-        std::lock_guard<std::mutex> lock(g_eventBufferMutex);
-        g_eventBuffer.clear();
-    }
-    g_lastSentStringTableSize = 0;
-    rive::RiveProfile::instance().setFlushCallback(
-        flushTransitionRecordsToEventBuffer);
-    rive::RiveProfile::instance().setListenerPerformChangeFlushCallback(
-        flushListenerPerformChangeRecordsToEventBuffer);
-    rive::RiveProfile::instance().start();
-    return true;
+  if (rive::RiveProfile::instance().isActive())
+  {
+    return false;
+  }
+  g_profileBuffer.clear();
+  {
+    std::lock_guard<std::mutex> lock(g_eventBufferMutex);
+    g_eventBuffer.clear();
+  }
+  g_lastSentStringTableSize = 0;
+  rive::RiveProfile::instance().setFlushCallback(
+      flushTransitionRecordsToEventBuffer);
+  rive::RiveProfile::instance().setListenerPerformChangeFlushCallback(
+      flushListenerPerformChangeRecordsToEventBuffer);
+  rive::RiveProfile::instance().start();
+  return true;
 }
 
 EXPORT bool profilerIsActive()
 {
-    return rive::RiveProfile::instance().isActive();
+  return rive::RiveProfile::instance().isActive();
 }
 
 EXPORT size_t profilerDump()
 {
-    if (rive::RiveProfile::instance().isActive())
-    {
-        flushProfileAndMergeTransitionBuffer();
-    }
-    return g_profileBuffer.size();
+  if (rive::RiveProfile::instance().isActive())
+  {
+    flushProfileAndMergeTransitionBuffer();
+  }
+  return g_profileBuffer.size();
 }
 
 EXPORT const uint8_t* profilerGetBufferPtr() { return g_profileBuffer.data(); }
@@ -6858,8 +7340,8 @@ EXPORT size_t profilerGetBufferSize() { return g_profileBuffer.size(); }
 
 EXPORT void profilerFreeBuffer()
 {
-    g_profileBuffer.clear();
-    g_profileBuffer.shrink_to_fit();
+  g_profileBuffer.clear();
+  g_profileBuffer.shrink_to_fit();
 }
 
 EXPORT void profilerEndFrame() { rive::RiveProfile::instance().endFrame(); }
@@ -6882,18 +7364,18 @@ static ViewModelInstanceBufferResponse requestSerializedViewModelInstanceWasm(
     File* file,
     ViewModelInstance* instance)
 {
-    ViewModelInstanceBufferResponse r = {0, 0};
-    serializeViewModelInstanceByPointer(file, instance, &r);
-    return r;
+  ViewModelInstanceBufferResponse r = {0, 0};
+  serializeViewModelInstanceByPointer(file, instance, &r);
+  return r;
 }
 
 static void freeViewModelInstanceSerializedDataWasm(
     ViewModelInstanceBufferResponse response)
 {
-    if (response.data != 0)
-    {
-        free(reinterpret_cast<void*>(response.data));
-    }
+  if (response.data != 0)
+  {
+    free(reinterpret_cast<void*>(response.data));
+  }
 }
 #endif
 
@@ -6910,13 +7392,14 @@ using rive_native::DartKeyInputCallback;
 using rive_native::DartTextInputCallback;
 
 // FocusNode creation/disposal
-EXPORT void* makeFocusNode(DartKeyInputCallback keyInput,
-                           DartTextInputCallback textInput,
-                           DartFocusCallback focused,
-                           DartFocusCallback blurred)
+EXPORT void* makeFocusNode(
+    DartKeyInputCallback keyInput,
+    DartTextInputCallback textInput,
+    DartFocusCallback focused,
+    DartFocusCallback blurred)
 {
-    // DartFocusNode starts with refcount=1, which Dart owns
-    return new DartFocusNode(keyInput, textInput, focused, blurred);
+  // DartFocusNode starts with refcount=1, which Dart owns
+  return new DartFocusNode(keyInput, textInput, focused, blurred);
 }
 
 // Simple version without callbacks (for WASM where callbacks are handled in JS)
@@ -6924,129 +7407,130 @@ EXPORT void* makeFocusNodeSimple() { return new DartFocusNode(); }
 
 EXPORT void disposeFocusNode(void* node)
 {
-    if (node == nullptr)
-        return;
-    // Unref instead of delete - the node may still be held by FocusManager
-    static_cast<DartFocusNode*>(node)->unref();
+  if (node == nullptr)
+    return;
+  // Unref instead of delete - the node may still be held by FocusManager
+  static_cast<DartFocusNode*>(node)->unref();
 }
 
 // FocusNode properties
 // Note: DartFocusNode IS a FocusNode, so we cast directly
 EXPORT void focusNodeSetCanFocus(void* node, bool value)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->canFocus(value);
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->canFocus(value);
 }
 
 EXPORT bool focusNodeCanFocus(void* node)
 {
-    if (node == nullptr)
-        return false;
-    return static_cast<DartFocusNode*>(node)->canFocus();
+  if (node == nullptr)
+    return false;
+  return static_cast<DartFocusNode*>(node)->canFocus();
 }
 
 EXPORT void focusNodeSetCanTouch(void* node, bool value)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->canTouch(value);
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->canTouch(value);
 }
 
 EXPORT bool focusNodeCanTouch(void* node)
 {
-    if (node == nullptr)
-        return false;
-    return static_cast<DartFocusNode*>(node)->canTouch();
+  if (node == nullptr)
+    return false;
+  return static_cast<DartFocusNode*>(node)->canTouch();
 }
 
 EXPORT void focusNodeSetCanTraverse(void* node, bool value)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->canTraverse(value);
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->canTraverse(value);
 }
 
 #ifdef WITH_RIVE_TOOLS
 EXPORT void focusNodeSetIsCollapsed(void* node, bool value)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->isCollapsed(value);
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->isCollapsed(value);
 }
 #endif
 
 EXPORT bool focusNodeCanTraverse(void* node)
 {
-    if (node == nullptr)
-        return false;
-    return static_cast<DartFocusNode*>(node)->canTraverse();
+  if (node == nullptr)
+    return false;
+  return static_cast<DartFocusNode*>(node)->canTraverse();
 }
 
 EXPORT void focusNodeSetTabIndex(void* node, int value)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->tabIndex(value);
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->tabIndex(value);
 }
 
 EXPORT int focusNodeTabIndex(void* node)
 {
-    if (node == nullptr)
-        return 0;
-    return static_cast<DartFocusNode*>(node)->tabIndex();
+  if (node == nullptr)
+    return 0;
+  return static_cast<DartFocusNode*>(node)->tabIndex();
 }
 
 EXPORT void focusNodeSetEdgeBehavior(void* node, uint8_t edgeBehavior)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->edgeBehavior(
-        static_cast<rive::EdgeBehavior>(edgeBehavior));
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->edgeBehavior(
+      static_cast<rive::EdgeBehavior>(edgeBehavior));
 }
 
 EXPORT uint8_t focusNodeGetEdgeBehavior(void* node)
 {
-    if (node == nullptr)
-        return 0;
-    return static_cast<uint8_t>(
-        static_cast<DartFocusNode*>(node)->edgeBehavior());
+  if (node == nullptr)
+    return 0;
+  return static_cast<uint8_t>(
+      static_cast<DartFocusNode*>(node)->edgeBehavior());
 }
 
 // FocusNode world bounds (for directional navigation)
 // Bounds are stored directly on FocusNode and updated during update cycle
-EXPORT void focusNodeSetWorldBounds(void* node,
-                                    float minX,
-                                    float minY,
-                                    float maxX,
-                                    float maxY)
+EXPORT void focusNodeSetWorldBounds(
+    void* node,
+    float minX,
+    float minY,
+    float maxX,
+    float maxY)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->worldBounds(
-        rive::AABB(minX, minY, maxX, maxY));
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->worldBounds(
+      rive::AABB(minX, minY, maxX, maxY));
 }
 
 EXPORT void focusNodeClearWorldBounds(void* node)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->clearWorldBounds();
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->clearWorldBounds();
 }
 
 // FocusNode name (for debugging)
 EXPORT const char* focusNodeGetName(void* node)
 {
-    if (node == nullptr)
-        return "";
-    return static_cast<DartFocusNode*>(node)->name().c_str();
+  if (node == nullptr)
+    return "";
+  return static_cast<DartFocusNode*>(node)->name().c_str();
 }
 
 EXPORT void focusNodeSetName(void* node, const char* name)
 {
-    if (node == nullptr)
-        return;
-    static_cast<DartFocusNode*>(node)->name(name ? name : "");
+  if (node == nullptr)
+    return;
+  static_cast<DartFocusNode*>(node)->name(name ? name : "");
 }
 
 // FocusManager creation/disposal
@@ -7054,33 +7538,33 @@ EXPORT void* makeFocusManager() { return new rive::FocusManager(); }
 
 EXPORT void disposeFocusManager(void* manager)
 {
-    std::lock_guard<std::mutex> lock(g_deleteMutex);
-    auto* fm = static_cast<rive::FocusManager*>(manager);
+  std::lock_guard<std::mutex> lock(g_deleteMutex);
+  auto* fm = static_cast<rive::FocusManager*>(manager);
 #if defined(__EMSCRIPTEN__) && defined(WITH_RIVE_TOOLS)
-    // Clean up WASM callback maps
-    g_focusChangedCallbacksWasm.erase(fm);
-    g_scrollIntoViewCallbacksWasm.erase(fm);
+  // Clean up WASM callback maps
+  g_focusChangedCallbacksWasm.erase(fm);
+  g_scrollIntoViewCallbacksWasm.erase(fm);
 #endif
-    delete fm;
+  delete fm;
 }
 
 // FocusManager - focus state
 EXPORT void* focusManagerGetPrimaryFocus(void* manager)
 {
-    if (manager == nullptr)
-        return nullptr;
-    return static_cast<rive::FocusManager*>(manager)->primaryFocus().get();
+  if (manager == nullptr)
+    return nullptr;
+  return static_cast<rive::FocusManager*>(manager)->primaryFocus().get();
 }
 
 #ifdef __EMSCRIPTEN__
 /// WASM-specific struct to return primary focus bounds
 struct FocusBoundsResult
 {
-    int valid; // 1 if bounds are valid, 0 otherwise
-    float minX;
-    float minY;
-    float maxX;
-    float maxY;
+  int valid; // 1 if bounds are valid, 0 otherwise
+  float minX;
+  float minY;
+  float maxX;
+  float maxY;
 };
 
 /// Get the world bounds of the primary focus (WASM version).
@@ -7088,43 +7572,44 @@ struct FocusBoundsResult
 /// never bind a void* parameter and throws UnboundTypeError at call time.
 EXPORT FocusBoundsResult focusManagerGetPrimaryFocusBounds(WasmPtr managerPtr)
 {
-    auto* manager = reinterpret_cast<rive::FocusManager*>(managerPtr);
-    FocusBoundsResult result = {0, 0, 0, 0, 0};
-    if (manager == nullptr)
-        return result;
-    rive::AABB bounds;
-    if (!manager->primaryFocusBounds(bounds))
-    {
-        return result;
-    }
-    result.valid = 1;
-    result.minX = bounds.minX;
-    result.minY = bounds.minY;
-    result.maxX = bounds.maxX;
-    result.maxY = bounds.maxY;
+  auto* manager = reinterpret_cast<rive::FocusManager*>(managerPtr);
+  FocusBoundsResult result = {0, 0, 0, 0, 0};
+  if (manager == nullptr)
     return result;
+  rive::AABB bounds;
+  if (!manager->primaryFocusBounds(bounds))
+  {
+    return result;
+  }
+  result.valid = 1;
+  result.minX = bounds.minX;
+  result.minY = bounds.minY;
+  result.maxX = bounds.maxX;
+  result.maxY = bounds.maxY;
+  return result;
 }
 #else
 /// Get the world bounds of the primary focus.
 /// Returns true if bounds are valid. Outputs are set only if true.
-EXPORT bool focusManagerGetPrimaryFocusBounds(void* manager,
-                                              float* outMinX,
-                                              float* outMinY,
-                                              float* outMaxX,
-                                              float* outMaxY)
+EXPORT bool focusManagerGetPrimaryFocusBounds(
+    void* manager,
+    float* outMinX,
+    float* outMinY,
+    float* outMaxX,
+    float* outMaxY)
 {
-    if (manager == nullptr)
-        return false;
-    rive::AABB bounds;
-    if (!static_cast<rive::FocusManager*>(manager)->primaryFocusBounds(bounds))
-    {
-        return false;
-    }
-    *outMinX = bounds.minX;
-    *outMinY = bounds.minY;
-    *outMaxX = bounds.maxX;
-    *outMaxY = bounds.maxY;
-    return true;
+  if (manager == nullptr)
+    return false;
+  rive::AABB bounds;
+  if (!static_cast<rive::FocusManager*>(manager)->primaryFocusBounds(bounds))
+  {
+    return false;
+  }
+  *outMinX = bounds.minX;
+  *outMinY = bounds.minY;
+  *outMaxX = bounds.maxX;
+  *outMaxY = bounds.maxY;
+  return true;
 }
 #endif
 
@@ -7133,19 +7618,19 @@ EXPORT bool focusManagerGetPrimaryFocusBounds(void* manager,
 /// artboard.
 EXPORT void* focusManagerGetPrimaryFocusArtboard(void* manager)
 {
-    if (manager == nullptr)
-        return nullptr;
-    return static_cast<rive::FocusManager*>(manager)->primaryFocusArtboard();
+  if (manager == nullptr)
+    return nullptr;
+  return static_cast<rive::FocusManager*>(manager)->primaryFocusArtboard();
 }
 
 /// Get the immediate artboard that contains the primary focus (no walk-up).
 /// Returns nullptr if there is no focus or the focusable has no artboard.
 EXPORT void* focusManagerGetPrimaryFocusImmediateArtboard(void* manager)
 {
-    if (manager == nullptr)
-        return nullptr;
-    return static_cast<rive::FocusManager*>(manager)
-        ->primaryFocusImmediateArtboard();
+  if (manager == nullptr)
+    return nullptr;
+  return static_cast<rive::FocusManager*>(manager)
+      ->primaryFocusImmediateArtboard();
 }
 
 /// Check if the primary focus is inside the given artboard (or a nested
@@ -7153,32 +7638,32 @@ EXPORT void* focusManagerGetPrimaryFocusImmediateArtboard(void* manager)
 /// given artboard or a descendant of it.
 EXPORT bool focusManagerIsFocusInArtboard(void* manager, void* artboard)
 {
-    if (manager == nullptr || artboard == nullptr)
-        return false;
-
-    auto* focusManager = static_cast<rive::FocusManager*>(manager);
-    auto* targetArtboard = static_cast<rive::Artboard*>(artboard);
-
-    // Get the immediate artboard containing the focused element
-    rive::Artboard* focusedArtboard =
-        focusManager->primaryFocusImmediateArtboard();
-    if (focusedArtboard == nullptr)
-        return false;
-
-    // Walk up the chain from the focused artboard to see if we hit the target
-    rive::Artboard* current = focusedArtboard;
-    while (current != nullptr)
-    {
-        if (current == targetArtboard)
-            return true;
-
-        // Move to parent artboard via host
-        if (current->host() == nullptr)
-            break;
-        current = current->host()->parentArtboard();
-    }
-
+  if (manager == nullptr || artboard == nullptr)
     return false;
+
+  auto* focusManager = static_cast<rive::FocusManager*>(manager);
+  auto* targetArtboard = static_cast<rive::Artboard*>(artboard);
+
+  // Get the immediate artboard containing the focused element
+  rive::Artboard* focusedArtboard = focusManager
+                                        ->primaryFocusImmediateArtboard();
+  if (focusedArtboard == nullptr)
+    return false;
+
+  // Walk up the chain from the focused artboard to see if we hit the target
+  rive::Artboard* current = focusedArtboard;
+  while (current != nullptr)
+  {
+    if (current == targetArtboard)
+      return true;
+
+    // Move to parent artboard via host
+    if (current->host() == nullptr)
+      break;
+    current = current->host()->parentArtboard();
+  }
+
+  return false;
 }
 
 // Applies focus changes queued by FocusActions, keeping any that can't take
@@ -7187,18 +7672,18 @@ EXPORT bool focusManagerIsFocusInArtboard(void* manager, void* artboard)
 // computes.
 EXPORT void focusManagerProcessAllPendingFocusRequests(void* manager)
 {
-    if (manager == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->processAllPendingFocusRequests();
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->processAllPendingFocusRequests();
 }
 
 // Every root at once, for a host that knows the frame is over for all of
 // them (the editor's end-of-frame pass).
 EXPORT void focusManagerFinishAllPendingFocusRequests(void* manager)
 {
-    if (manager == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->finishAllPendingFocusRequests();
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->finishAllPendingFocusRequests();
 }
 
 // Queue-and-retry counterparts of setFocus / clearFocus / focus<direction>,
@@ -7209,196 +7694,214 @@ EXPORT void focusManagerFinishAllPendingFocusRequests(void* manager)
 // Dart owns this manager and drains it with the all-roots calls.
 EXPORT void focusManagerRequestFocus(void* manager, void* node)
 {
-    if (manager == nullptr || node == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->requestFocus(
-        rive::ref_rcp(static_cast<DartFocusNode*>(node)),
-        nullptr);
+  if (manager == nullptr || node == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->requestFocus(
+      rive::ref_rcp(static_cast<DartFocusNode*>(node)),
+      nullptr);
 }
 
 EXPORT void focusManagerRequestClearFocus(void* manager)
 {
-    if (manager == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->requestClearFocus(nullptr);
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->requestClearFocus(nullptr);
 }
 
 EXPORT void focusManagerRequestTraversal(void* manager, uint32_t traversalKind)
 {
-    if (manager == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->requestTraversal(traversalKind,
-                                                                nullptr);
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->requestTraversal(
+      traversalKind,
+      nullptr);
 }
 
 EXPORT void focusManagerSetFocus(void* manager, void* node)
 {
-    if (manager == nullptr)
-        return;
-    auto* focusManager = static_cast<rive::FocusManager*>(manager);
-    if (node == nullptr)
-    {
-        focusManager->clearFocus();
-    }
-    else
-    {
-        focusManager->setFocus(
-            rive::ref_rcp(static_cast<DartFocusNode*>(node)));
-    }
+  if (manager == nullptr)
+    return;
+  auto* focusManager = static_cast<rive::FocusManager*>(manager);
+  if (node == nullptr)
+  {
+    focusManager->clearFocus();
+  }
+  else
+  {
+    focusManager->setFocus(rive::ref_rcp(static_cast<DartFocusNode*>(node)));
+  }
+}
+
+EXPORT void focusManagerPressBegan(void* manager)
+{
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->pressBegan();
+}
+
+EXPORT void focusManagerPressEnded(void* manager, float x, float y)
+{
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->pressEnded(rive::Vec2D(x, y));
 }
 
 EXPORT void focusManagerClearFocus(void* manager)
 {
-    if (manager == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->clearFocus();
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->clearFocus();
 }
 
 EXPORT bool focusManagerHasFocus(void* manager, void* node)
 {
-    if (manager == nullptr || node == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->hasFocus(
-        rive::ref_rcp(static_cast<DartFocusNode*>(node)));
+  if (manager == nullptr || node == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->hasFocus(
+      rive::ref_rcp(static_cast<DartFocusNode*>(node)));
 }
 
 EXPORT bool focusManagerHasPrimaryFocus(void* manager, void* node)
 {
-    if (manager == nullptr || node == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->hasPrimaryFocus(
-        rive::ref_rcp(static_cast<DartFocusNode*>(node)));
+  if (manager == nullptr || node == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->hasPrimaryFocus(
+      rive::ref_rcp(static_cast<DartFocusNode*>(node)));
 }
 
 EXPORT void dropFocusIfFocusTargetHidden(void* manager)
 {
-    if (manager == nullptr)
-    {
-        return;
-    }
-    static_cast<rive::FocusManager*>(manager)->dropFocusIfFocusTargetHidden();
+  if (manager == nullptr)
+  {
+    return;
+  }
+  static_cast<rive::FocusManager*>(manager)->dropFocusIfFocusTargetHidden();
 }
 
 // FocusManager - hierarchy
 EXPORT void focusManagerAddChild(void* manager, void* parent, void* child)
 {
-    if (manager == nullptr || child == nullptr)
-        return;
-    auto* focusManager = static_cast<rive::FocusManager*>(manager);
-    rive::rcp<rive::FocusNode> parentNode =
-        parent ? rive::ref_rcp(static_cast<DartFocusNode*>(parent)) : nullptr;
-    rive::rcp<rive::FocusNode> childNode =
-        rive::ref_rcp(static_cast<DartFocusNode*>(child));
-    focusManager->addChild(parentNode, childNode);
+  if (manager == nullptr || child == nullptr)
+    return;
+  auto* focusManager = static_cast<rive::FocusManager*>(manager);
+  rive::rcp<rive::FocusNode> parentNode = parent
+                                              ? rive::ref_rcp(
+                                                    static_cast<DartFocusNode*>(
+                                                        parent))
+                                              : nullptr;
+  rive::rcp<rive::FocusNode> childNode = rive::ref_rcp(
+      static_cast<DartFocusNode*>(child));
+  focusManager->addChild(parentNode, childNode);
 }
 
 EXPORT void focusManagerRemoveChild(void* manager, void* child)
 {
-    if (manager == nullptr || child == nullptr)
-        return;
-    auto* focusManager = static_cast<rive::FocusManager*>(manager);
-    rive::rcp<rive::FocusNode> childNode =
-        rive::ref_rcp(static_cast<DartFocusNode*>(child));
-    focusManager->removeChild(childNode);
+  if (manager == nullptr || child == nullptr)
+    return;
+  auto* focusManager = static_cast<rive::FocusManager*>(manager);
+  rive::rcp<rive::FocusNode> childNode = rive::ref_rcp(
+      static_cast<DartFocusNode*>(child));
+  focusManager->removeChild(childNode);
 }
 
 EXPORT void focusManagerDetachChild(void* manager, void* child)
 {
-    if (manager == nullptr || child == nullptr)
-        return;
-    auto* focusManager = static_cast<rive::FocusManager*>(manager);
-    rive::rcp<rive::FocusNode> childNode =
-        rive::ref_rcp(static_cast<DartFocusNode*>(child));
-    focusManager->detachChild(childNode);
+  if (manager == nullptr || child == nullptr)
+    return;
+  auto* focusManager = static_cast<rive::FocusManager*>(manager);
+  rive::rcp<rive::FocusNode> childNode = rive::ref_rcp(
+      static_cast<DartFocusNode*>(child));
+  focusManager->detachChild(childNode);
 }
 
 // FocusManager - traversal
 EXPORT bool focusManagerFocusNext(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->focusNext();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->focusNext();
 }
 
 EXPORT bool focusManagerFocusPrevious(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->focusPrevious();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->focusPrevious();
 }
 
 // FocusManager - directional navigation
 EXPORT bool focusManagerFocusLeft(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->focusLeft();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->focusLeft();
 }
 
 EXPORT bool focusManagerFocusRight(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->focusRight();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->focusRight();
 }
 
 EXPORT bool focusManagerFocusUp(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->focusUp();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->focusUp();
 }
 
 EXPORT bool focusManagerFocusDown(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->focusDown();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->focusDown();
 }
 
 // FocusManager - input routing
-EXPORT bool focusManagerKeyInput(void* manager,
-                                 uint16_t key,
-                                 uint8_t modifiers,
-                                 bool isPressed,
-                                 bool isRepeat)
+EXPORT bool focusManagerKeyInput(
+    void* manager,
+    uint16_t key,
+    uint8_t modifiers,
+    bool isPressed,
+    bool isRepeat)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->keyInput(
-        static_cast<rive::Key>(key),
-        static_cast<rive::KeyModifiers>(modifiers),
-        isPressed,
-        isRepeat);
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->keyInput(
+      static_cast<rive::Key>(key),
+      static_cast<rive::KeyModifiers>(modifiers),
+      isPressed,
+      isRepeat);
 }
 
 EXPORT bool focusManagerTextInput(void* manager, const char* text)
 {
-    if (manager == nullptr || text == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->textInput(text);
+  if (manager == nullptr || text == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->textInput(text);
 }
 
 // The focused element's selected text (empty when nothing with a selection is
 // focused). Caller frees the returned string via freeString.
 EXPORT const char* focusManagerSelectedText(void* manager)
 {
-    if (manager == nullptr)
-        return nullptr;
-    auto text = static_cast<rive::FocusManager*>(manager)->selectedText();
-    if (text.empty())
-    {
-        return nullptr;
-    }
-    return toCString(text);
+  if (manager == nullptr)
+    return nullptr;
+  auto text = static_cast<rive::FocusManager*>(manager)->selectedText();
+  if (text.empty())
+  {
+    return nullptr;
+  }
+  return toCString(text);
 }
 
 // Whether the focused element (or an ancestor) is a text input.
 EXPORT bool focusManagerPrimaryFocusAcceptsText(void* manager)
 {
-    if (manager == nullptr)
-        return false;
-    return static_cast<rive::FocusManager*>(manager)->primaryFocusAcceptsText();
+  if (manager == nullptr)
+    return false;
+  return static_cast<rive::FocusManager*>(manager)->primaryFocusAcceptsText();
 }
 
 #if defined(__EMSCRIPTEN__)
@@ -7408,143 +7911,149 @@ EXPORT bool focusManagerPrimaryFocusAcceptsText(void* manager)
 
 struct WasmFocusNodeCallbacks
 {
-    emscripten::val onKeyInput = emscripten::val::null();
-    emscripten::val onTextInput = emscripten::val::null();
-    emscripten::val onFocused = emscripten::val::null();
-    emscripten::val onBlurred = emscripten::val::null();
+  emscripten::val onKeyInput = emscripten::val::null();
+  emscripten::val onTextInput = emscripten::val::null();
+  emscripten::val onFocused = emscripten::val::null();
+  emscripten::val onBlurred = emscripten::val::null();
 };
 
 std::unordered_map<void*, WasmFocusNodeCallbacks> g_focusNodeCallbacksWasm;
 
 // Static thunks that look up the per-node JS callback and invoke it
-static bool wasmKeyInputThunk(void* nodePtr,
-                              uint16_t key,
-                              uint8_t modifiers,
-                              bool isPressed,
-                              bool isRepeat)
+static bool wasmKeyInputThunk(
+    void* nodePtr,
+    uint16_t key,
+    uint8_t modifiers,
+    bool isPressed,
+    bool isRepeat)
 {
-    auto it = g_focusNodeCallbacksWasm.find(nodePtr);
-    if (it != g_focusNodeCallbacksWasm.end() &&
-        !it->second.onKeyInput.isNull() && !it->second.onKeyInput.isUndefined())
-    {
-        return it->second
-            .onKeyInput(static_cast<int>(key),
-                        static_cast<int>(modifiers),
-                        isPressed,
-                        isRepeat)
-            .as<bool>();
-    }
-    return false;
+  auto it = g_focusNodeCallbacksWasm.find(nodePtr);
+  if (it != g_focusNodeCallbacksWasm.end() && !it->second.onKeyInput.isNull() &&
+      !it->second.onKeyInput.isUndefined())
+  {
+    return it->second
+        .onKeyInput(
+            static_cast<int>(key),
+            static_cast<int>(modifiers),
+            isPressed,
+            isRepeat)
+        .as<bool>();
+  }
+  return false;
 }
 
 static bool wasmTextInputThunk(void* nodePtr, const char* text)
 {
-    auto it = g_focusNodeCallbacksWasm.find(nodePtr);
-    if (it != g_focusNodeCallbacksWasm.end() &&
-        !it->second.onTextInput.isNull() &&
-        !it->second.onTextInput.isUndefined())
-    {
-        return it->second.onTextInput(std::string(text)).as<bool>();
-    }
-    return false;
+  auto it = g_focusNodeCallbacksWasm.find(nodePtr);
+  if (it != g_focusNodeCallbacksWasm.end() &&
+      !it->second.onTextInput.isNull() && !it->second.onTextInput.isUndefined())
+  {
+    return it->second.onTextInput(std::string(text)).as<bool>();
+  }
+  return false;
 }
 
 static void wasmFocusedThunk(void* nodePtr)
 {
-    auto it = g_focusNodeCallbacksWasm.find(nodePtr);
-    if (it != g_focusNodeCallbacksWasm.end() &&
-        !it->second.onFocused.isNull() && !it->second.onFocused.isUndefined())
-    {
-        it->second.onFocused();
-    }
+  auto it = g_focusNodeCallbacksWasm.find(nodePtr);
+  if (it != g_focusNodeCallbacksWasm.end() && !it->second.onFocused.isNull() &&
+      !it->second.onFocused.isUndefined())
+  {
+    it->second.onFocused();
+  }
 }
 
 static void wasmBlurredThunk(void* nodePtr)
 {
-    auto it = g_focusNodeCallbacksWasm.find(nodePtr);
-    if (it != g_focusNodeCallbacksWasm.end() &&
-        !it->second.onBlurred.isNull() && !it->second.onBlurred.isUndefined())
-    {
-        it->second.onBlurred();
-    }
+  auto it = g_focusNodeCallbacksWasm.find(nodePtr);
+  if (it != g_focusNodeCallbacksWasm.end() && !it->second.onBlurred.isNull() &&
+      !it->second.onBlurred.isUndefined())
+  {
+    it->second.onBlurred();
+  }
 }
 
-WasmPtr makeFocusNodeWasm(emscripten::val onKeyInput,
-                          emscripten::val onTextInput,
-                          emscripten::val onFocused,
-                          emscripten::val onBlurred)
+WasmPtr makeFocusNodeWasm(
+    emscripten::val onKeyInput,
+    emscripten::val onTextInput,
+    emscripten::val onFocused,
+    emscripten::val onBlurred)
 {
-    bool hasCallbacks = (!onKeyInput.isNull() && !onKeyInput.isUndefined()) ||
-                        (!onTextInput.isNull() && !onTextInput.isUndefined()) ||
-                        (!onFocused.isNull() && !onFocused.isUndefined()) ||
-                        (!onBlurred.isNull() && !onBlurred.isUndefined());
+  bool hasCallbacks = (!onKeyInput.isNull() && !onKeyInput.isUndefined()) ||
+                      (!onTextInput.isNull() && !onTextInput.isUndefined()) ||
+                      (!onFocused.isNull() && !onFocused.isUndefined()) ||
+                      (!onBlurred.isNull() && !onBlurred.isUndefined());
 
-    DartFocusNode* node;
-    if (hasCallbacks)
-    {
-        node = new DartFocusNode(wasmKeyInputThunk,
-                                 wasmTextInputThunk,
-                                 wasmFocusedThunk,
-                                 wasmBlurredThunk);
-        g_focusNodeCallbacksWasm[static_cast<void*>(node)] = {
-            onKeyInput,
-            onTextInput,
-            onFocused,
-            onBlurred,
-        };
-    }
-    else
-    {
-        node = new DartFocusNode();
-    }
-    return reinterpret_cast<WasmPtr>(node);
+  DartFocusNode* node;
+  if (hasCallbacks)
+  {
+    node = new DartFocusNode(
+        wasmKeyInputThunk,
+        wasmTextInputThunk,
+        wasmFocusedThunk,
+        wasmBlurredThunk);
+    g_focusNodeCallbacksWasm[static_cast<void*>(node)] = {
+        onKeyInput,
+        onTextInput,
+        onFocused,
+        onBlurred,
+    };
+  }
+  else
+  {
+    node = new DartFocusNode();
+  }
+  return reinterpret_cast<WasmPtr>(node);
 }
 
 // Clean up WASM callbacks when a FocusNode is disposed
 static void disposeFocusNodeWasm(WasmPtr nodePtr)
 {
-    auto* node = reinterpret_cast<DartFocusNode*>(nodePtr);
-    if (node == nullptr)
-        return;
-    g_focusNodeCallbacksWasm.erase(static_cast<void*>(node));
-    node->unref();
+  auto* node = reinterpret_cast<DartFocusNode*>(nodePtr);
+  if (node == nullptr)
+    return;
+  g_focusNodeCallbacksWasm.erase(static_cast<void*>(node));
+  node->unref();
 }
 #endif
 
 #ifdef WITH_RIVE_TOOLS
 using FocusChangedCallback = void (*)();
-EXPORT void focusManagerSetFocusChangedCallback(void* manager,
-                                                FocusChangedCallback callback)
+EXPORT void focusManagerSetFocusChangedCallback(
+    void* manager,
+    FocusChangedCallback callback)
 {
-    if (manager == nullptr)
-        return;
-    static_cast<rive::FocusManager*>(manager)->setFocusChangedCallback(
-        callback);
+  if (manager == nullptr)
+    return;
+  static_cast<rive::FocusManager*>(manager)->setFocusChangedCallback(callback);
 }
 
 // Callback for scroll-into-view requests from Dart-mounted artboards.
 // Parameters passed to Dart:
 // - minX, minY, maxX, maxY: world bounds of the focused element
 // - rootArtboard: pointer to the root artboard (host == null)
-using ScrollIntoViewCallback = void (*)(float minX,
-                                        float minY,
-                                        float maxX,
-                                        float maxY,
-                                        void* rootArtboard);
+using ScrollIntoViewCallback = void (*)(
+    float minX,
+    float minY,
+    float maxX,
+    float maxY,
+    void* rootArtboard);
 
 // Static thunk that converts AABB to individual floats for Dart FFI
 static ScrollIntoViewCallback g_scrollIntoViewCallback = nullptr;
-static void scrollIntoViewThunk(const rive::AABB& bounds,
-                                rive::Artboard* rootArtboard)
+static void scrollIntoViewThunk(
+    const rive::AABB& bounds,
+    rive::Artboard* rootArtboard)
 {
-    if (g_scrollIntoViewCallback)
-    {
-        g_scrollIntoViewCallback(bounds.minX,
-                                 bounds.minY,
-                                 bounds.maxX,
-                                 bounds.maxY,
-                                 static_cast<void*>(rootArtboard));
-    }
+  if (g_scrollIntoViewCallback)
+  {
+    g_scrollIntoViewCallback(
+        bounds.minX,
+        bounds.minY,
+        bounds.maxX,
+        bounds.maxY,
+        static_cast<void*>(rootArtboard));
+  }
 }
 
 #if defined(__EMSCRIPTEN__)
@@ -7561,33 +8070,34 @@ std::unordered_map<rive::FocusManager*, emscripten::val>
 // This matches FFI behavior where a single trampoline notifies all managers
 static void focusChangedBroadcastThunk()
 {
-    for (auto& pair : g_focusChangedCallbacksWasm)
+  for (auto& pair : g_focusChangedCallbacksWasm)
+  {
+    if (!pair.second.isNull() && !pair.second.isUndefined())
     {
-        if (!pair.second.isNull() && !pair.second.isUndefined())
-        {
-            pair.second();
-        }
+      pair.second();
     }
+  }
 }
 
-void focusManagerSetFocusChangedCallbackWasm(WasmPtr managerPtr,
-                                             emscripten::val callback)
+void focusManagerSetFocusChangedCallbackWasm(
+    WasmPtr managerPtr,
+    emscripten::val callback)
 {
-    auto* manager = reinterpret_cast<rive::FocusManager*>(managerPtr);
-    if (manager == nullptr)
-        return;
+  auto* manager = reinterpret_cast<rive::FocusManager*>(managerPtr);
+  if (manager == nullptr)
+    return;
 
-    if (!callback.isNull() && !callback.isUndefined())
-    {
-        g_focusChangedCallbacksWasm[manager] = callback;
-        // All managers share the same broadcast thunk
-        manager->setFocusChangedCallback(focusChangedBroadcastThunk);
-    }
-    else
-    {
-        g_focusChangedCallbacksWasm.erase(manager);
-        manager->setFocusChangedCallback(nullptr);
-    }
+  if (!callback.isNull() && !callback.isUndefined())
+  {
+    g_focusChangedCallbacksWasm[manager] = callback;
+    // All managers share the same broadcast thunk
+    manager->setFocusChangedCallback(focusChangedBroadcastThunk);
+  }
+  else
+  {
+    g_focusChangedCallbacksWasm.erase(manager);
+    manager->setFocusChangedCallback(nullptr);
+  }
 }
 
 // WASM-specific: Store per-manager emscripten::val callbacks for
@@ -7596,65 +8106,70 @@ std::unordered_map<rive::FocusManager*, emscripten::val>
     g_scrollIntoViewCallbacksWasm;
 
 // Broadcast thunk for scroll-into-view
-static void scrollIntoViewBroadcastThunk(const rive::AABB& bounds,
-                                         rive::Artboard* rootArtboard)
+static void scrollIntoViewBroadcastThunk(
+    const rive::AABB& bounds,
+    rive::Artboard* rootArtboard)
 {
-    for (auto& pair : g_scrollIntoViewCallbacksWasm)
+  for (auto& pair : g_scrollIntoViewCallbacksWasm)
+  {
+    if (!pair.second.isNull() && !pair.second.isUndefined())
     {
-        if (!pair.second.isNull() && !pair.second.isUndefined())
-        {
-            pair.second(bounds.minX,
-                        bounds.minY,
-                        bounds.maxX,
-                        bounds.maxY,
-                        reinterpret_cast<uintptr_t>(rootArtboard));
-        }
+      pair.second(
+          bounds.minX,
+          bounds.minY,
+          bounds.maxX,
+          bounds.maxY,
+          reinterpret_cast<uintptr_t>(rootArtboard));
     }
+  }
 }
 
-void focusManagerSetScrollIntoViewCallback(WasmPtr managerPtr,
-                                           emscripten::val callback)
+void focusManagerSetScrollIntoViewCallback(
+    WasmPtr managerPtr,
+    emscripten::val callback)
 {
-    auto* manager = reinterpret_cast<rive::FocusManager*>(managerPtr);
-    if (manager == nullptr)
-        return;
+  auto* manager = reinterpret_cast<rive::FocusManager*>(managerPtr);
+  if (manager == nullptr)
+    return;
 
-    if (!callback.isNull() && !callback.isUndefined())
-    {
-        g_scrollIntoViewCallbacksWasm[manager] = callback;
-        manager->setScrollIntoViewCallback(scrollIntoViewBroadcastThunk);
-    }
-    else
-    {
-        g_scrollIntoViewCallbacksWasm.erase(manager);
-        manager->setScrollIntoViewCallback(nullptr);
-    }
+  if (!callback.isNull() && !callback.isUndefined())
+  {
+    g_scrollIntoViewCallbacksWasm[manager] = callback;
+    manager->setScrollIntoViewCallback(scrollIntoViewBroadcastThunk);
+  }
+  else
+  {
+    g_scrollIntoViewCallbacksWasm.erase(manager);
+    manager->setScrollIntoViewCallback(nullptr);
+  }
 }
 #else
 EXPORT void focusManagerSetScrollIntoViewCallback(
     void* manager,
     ScrollIntoViewCallback callback)
 {
-    if (manager == nullptr)
-        return;
-    g_scrollIntoViewCallback = callback;
-    static_cast<rive::FocusManager*>(manager)->setScrollIntoViewCallback(
-        callback != nullptr ? scrollIntoViewThunk : nullptr);
+  if (manager == nullptr)
+    return;
+  g_scrollIntoViewCallback = callback;
+  static_cast<rive::FocusManager*>(manager)->setScrollIntoViewCallback(
+      callback != nullptr ? scrollIntoViewThunk : nullptr);
 }
 #endif
 #else
-using ScrollIntoViewCallback = void (*)(float minX,
-                                        float minY,
-                                        float maxX,
-                                        float maxY,
-                                        void* rootArtboard);
+using ScrollIntoViewCallback = void (*)(
+    float minX,
+    float minY,
+    float maxX,
+    float maxY,
+    void* rootArtboard);
 EXPORT void focusManagerSetScrollIntoViewCallback(
     void* manager,
     ScrollIntoViewCallback callback)
 {}
 using FocusChangedCallback = void (*)();
-EXPORT void focusManagerSetFocusChangedCallback(void* manager,
-                                                FocusChangedCallback callback)
+EXPORT void focusManagerSetFocusChangedCallback(
+    void* manager,
+    FocusChangedCallback callback)
 {}
 #endif
 
@@ -7665,51 +8180,56 @@ EXPORT void focusManagerSetFocusChangedCallback(void* manager,
 
 EXPORT SizeType artboardRootFocusDataCount(WrappedArtboard* wrappedArtboard)
 {
-    if (wrappedArtboard == nullptr)
-        return 0;
-    return wrappedArtboard->artboard()->rootFocusDataCount();
+  if (wrappedArtboard == nullptr)
+    return 0;
+  return wrappedArtboard->artboard()->rootFocusDataCount();
 }
 
-EXPORT void* artboardRootFocusNodeAt(WrappedArtboard* wrappedArtboard,
-                                     SizeType index)
+EXPORT void* artboardRootFocusNodeAt(
+    WrappedArtboard* wrappedArtboard,
+    SizeType index)
 {
-    if (wrappedArtboard == nullptr)
-        return nullptr;
-    auto* focusData = wrappedArtboard->artboard()->rootFocusDataAt(index);
-    if (focusData == nullptr)
-        return nullptr;
-    // Return the raw FocusNode pointer - it's compatible with FocusNode* FFI
-    return focusData->focusNode().get();
+  if (wrappedArtboard == nullptr)
+    return nullptr;
+  auto* focusData = wrappedArtboard->artboard()->rootFocusDataAt(index);
+  if (focusData == nullptr)
+    return nullptr;
+  // Return the raw FocusNode pointer - it's compatible with FocusNode* FFI
+  return focusData->focusNode().get();
 }
 
 // Set an external parent FocusNode on an artboard.
 // This allows focus nodes in nested artboards to be children of a FocusData
 // in the host artboard, even across artboard boundaries.
-EXPORT void artboardSetExternalParentFocusNode(WrappedArtboard* wrappedArtboard,
-                                               void* focusNode)
+EXPORT void artboardSetExternalParentFocusNode(
+    WrappedArtboard* wrappedArtboard,
+    void* focusNode)
 {
-    if (wrappedArtboard == nullptr)
-        return;
-    rive::rcp<rive::FocusNode> node =
-        focusNode ? rive::ref_rcp(static_cast<DartFocusNode*>(focusNode))
-                  : nullptr;
-    wrappedArtboard->artboard()->setExternalParentFocusNode(std::move(node));
+  if (wrappedArtboard == nullptr)
+    return;
+  rive::rcp<rive::FocusNode> node = focusNode ? rive::ref_rcp(
+                                                    static_cast<DartFocusNode*>(
+                                                        focusNode))
+                                              : nullptr;
+  wrappedArtboard->artboard()->setExternalParentFocusNode(std::move(node));
 }
 #endif
 
 // Build focus tree for an artboard using a parent FocusNode.
 // The FocusManager is derived from the parent node's manager() reference.
 // This is a convenience method for nested artboards.
-EXPORT void artboardBuildFocusTreeWithParent(WrappedArtboard* wrappedArtboard,
-                                             void* parentFocusNodePtr)
+EXPORT void artboardBuildFocusTreeWithParent(
+    WrappedArtboard* wrappedArtboard,
+    void* parentFocusNodePtr)
 {
-    if (wrappedArtboard == nullptr)
-        return;
-    rive::rcp<rive::FocusNode> parentNode =
-        parentFocusNodePtr
-            ? rive::ref_rcp(static_cast<DartFocusNode*>(parentFocusNodePtr))
-            : nullptr;
-    wrappedArtboard->artboard()->buildFocusTree(parentNode);
+  if (wrappedArtboard == nullptr)
+    return;
+  rive::rcp<rive::FocusNode> parentNode = parentFocusNodePtr
+                                              ? rive::ref_rcp(
+                                                    static_cast<DartFocusNode*>(
+                                                        parentFocusNodePtr))
+                                              : nullptr;
+  wrappedArtboard->artboard()->buildFocusTree(parentNode);
 }
 
 // Get the focus manager driving a state machine instance. The manager is owned
@@ -7718,20 +8238,21 @@ EXPORT void artboardBuildFocusTreeWithParent(WrappedArtboard* wrappedArtboard,
 EXPORT FocusManager* stateMachineGetFocusManager(
     WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-        return nullptr;
-    return wrappedMachine->stateMachine()->focusManager();
+  if (wrappedMachine == nullptr)
+    return nullptr;
+  return wrappedMachine->stateMachine()->focusManager();
 }
 
 // Point an artboard at an externally-owned focus manager, rebuilding its focus
 // tree against it. This is how a host (a parent artboard, or Dart at edit time)
 // shares its manager. Pass null to fall back to the artboard's own.
-EXPORT void artboardSetFocusManager(WrappedArtboard* wrappedArtboard,
-                                    FocusManager* focusManager)
+EXPORT void artboardSetFocusManager(
+    WrappedArtboard* wrappedArtboard,
+    FocusManager* focusManager)
 {
-    if (wrappedArtboard == nullptr || wrappedArtboard->artboard() == nullptr)
-        return;
-    wrappedArtboard->artboard()->adoptFocusManager(focusManager);
+  if (wrappedArtboard == nullptr || wrappedArtboard->artboard() == nullptr)
+    return;
+  wrappedArtboard->artboard()->adoptFocusManager(focusManager);
 }
 
 // Deprecated shim: focus managers belong to artboards now. Kept so existing
@@ -7740,33 +8261,33 @@ EXPORT void stateMachineSetExternalFocusManager(
     WrappedStateMachine* wrappedMachine,
     FocusManager* focusManager)
 {
-    if (wrappedMachine == nullptr)
-        return;
-    wrappedMachine->stateMachine()->setExternalFocusManager(focusManager);
+  if (wrappedMachine == nullptr)
+    return;
+  wrappedMachine->stateMachine()->setExternalFocusManager(focusManager);
 }
 
 /// Whether the state machine's (unified) focus tree has any focusable
 /// content. O(1) after the first call; safe to poll.
 EXPORT bool stateMachineHasFocusNodes(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-        return false;
-    return wrappedMachine->stateMachine()->hasFocusNodes();
+  if (wrappedMachine == nullptr)
+    return false;
+  return wrappedMachine->stateMachine()->hasFocusNodes();
 }
 
 /// Snapshot of StateMachineInstance::focusState packed as bits so FFI and
 /// wasm share one shape: bit 0 hasFocus, bit 1 expectsKeyboardInput.
 EXPORT uint8_t stateMachineFocusState(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-        return 0;
-    auto state = wrappedMachine->stateMachine()->focusState();
-    uint8_t bits = 0;
-    if (state.hasFocus)
-        bits |= 1;
-    if (state.expectsKeyboardInput)
-        bits |= 2;
-    return bits;
+  if (wrappedMachine == nullptr)
+    return 0;
+  auto state = wrappedMachine->stateMachine()->focusState();
+  uint8_t bits = 0;
+  if (state.hasFocus)
+    bits |= 1;
+  if (state.expectsKeyboardInput)
+    bits |= 2;
+  return bits;
 }
 
 // ============================================================
@@ -7775,57 +8296,58 @@ EXPORT uint8_t stateMachineFocusState(WrappedStateMachine* wrappedMachine)
 
 struct SemanticsDiffNodeFFI
 {
-    uint32_t id;
-    uint32_t role;
-    const char* label; // null-terminated, valid until freeSemanticDiff
-    const char* value; // null-terminated, valid until freeSemanticDiff
-    const char* hint;  // null-terminated, valid until freeSemanticDiff
-    uint32_t stateFlags;
-    uint32_t traitFlags;
-    float minX, minY, maxX, maxY;
-    int32_t parentId;
-    uint32_t siblingIndex;
-    uint32_t headingLevel;
+  uint32_t id;
+  uint32_t role;
+  const char* label; // null-terminated, valid until freeSemanticDiff
+  const char* value; // null-terminated, valid until freeSemanticDiff
+  const char* hint;  // null-terminated, valid until freeSemanticDiff
+  uint32_t stateFlags;
+  uint32_t traitFlags;
+  float minX, minY, maxX, maxY;
+  int32_t parentId;
+  uint32_t siblingIndex;
+  uint32_t headingLevel;
 };
 
 struct SemanticsChildrenUpdateFFI
 {
-    int32_t parentId;
-    const uint32_t* childIds;
-    uint32_t childCount;
+  int32_t parentId;
+  const uint32_t* childIds;
+  uint32_t childCount;
 };
 
 struct SemanticsBoundsUpdateFFI
 {
-    uint32_t id;
-    float minX, minY, maxX, maxY;
+  uint32_t id;
+  float minX, minY, maxX, maxY;
 };
 
 struct SemanticsDiffFFI
 {
-    uint64_t treeVersion;
-    uint32_t frameNumber;
-    uint32_t rootId;
+  uint64_t treeVersion;
+  uint32_t frameNumber;
+  uint32_t rootId;
 
-    const SemanticsDiffNodeFFI* added;
-    uint32_t addedCount;
-    const uint32_t* removed;
+  const SemanticsDiffNodeFFI* added;
+  uint32_t addedCount;
+  const uint32_t* removed;
 
-    uint32_t removedCount;
-    const SemanticsDiffNodeFFI* moved;
-    uint32_t movedCount;
-    const SemanticsDiffNodeFFI* updatedSemantic;
-    uint32_t updatedSemanticCount;
-    const SemanticsBoundsUpdateFFI* updatedGeometry;
-    uint32_t updatedGeometryCount;
-    const SemanticsChildrenUpdateFFI* childrenUpdated;
-    uint32_t childrenUpdatedCount;
+  uint32_t removedCount;
+  const SemanticsDiffNodeFFI* moved;
+  uint32_t movedCount;
+  const SemanticsDiffNodeFFI* updatedSemantic;
+  uint32_t updatedSemanticCount;
+  const SemanticsBoundsUpdateFFI* updatedGeometry;
+  uint32_t updatedGeometryCount;
+  const SemanticsChildrenUpdateFFI* childrenUpdated;
+  uint32_t childrenUpdatedCount;
 };
 
 // Pointer-free structs have identical layout on 32-bit WASM and 64-bit native,
 // so this assert is universal.
-static_assert(sizeof(SemanticsBoundsUpdateFFI) == 20,
-              "SemanticsBoundsUpdateFFI must match Dart/WASM readers");
+static_assert(
+    sizeof(SemanticsBoundsUpdateFFI) == 20,
+    "SemanticsBoundsUpdateFFI must match Dart/WASM readers");
 
 // Structs containing pointers differ between 32-bit WASM and 64-bit native.
 // The Dart-side layout is hand-maintained in two places:
@@ -7864,328 +8386,342 @@ static_assert(
 // value/hint; the Dart/WASM decoders map nullptr to ''.
 static const char* toCStringOrNull(const std::string& s)
 {
-    return s.empty() ? nullptr : toCString(s);
+  return s.empty() ? nullptr : toCString(s);
 }
 
 static SemanticsDiffNodeFFI toSemanticsDiffNodeFFI(
     const SemanticsDiffNode& node)
 {
-    SemanticsDiffNodeFFI ffi;
-    ffi.id = node.id;
-    ffi.role = node.role;
-    ffi.label = toCStringOrNull(node.label);
-    ffi.value = toCStringOrNull(node.value);
-    ffi.hint = toCStringOrNull(node.hint);
-    ffi.stateFlags = node.stateFlags;
-    ffi.traitFlags = node.traitFlags;
-    ffi.minX = node.minX;
-    ffi.minY = node.minY;
-    ffi.maxX = node.maxX;
-    ffi.maxY = node.maxY;
-    ffi.parentId = node.parentId;
-    ffi.siblingIndex = node.siblingIndex;
-    ffi.headingLevel = node.headingLevel;
-    return ffi;
+  SemanticsDiffNodeFFI ffi;
+  ffi.id = node.id;
+  ffi.role = node.role;
+  ffi.label = toCStringOrNull(node.label);
+  ffi.value = toCStringOrNull(node.value);
+  ffi.hint = toCStringOrNull(node.hint);
+  ffi.stateFlags = node.stateFlags;
+  ffi.traitFlags = node.traitFlags;
+  ffi.minX = node.minX;
+  ffi.minY = node.minY;
+  ffi.maxX = node.maxX;
+  ffi.maxY = node.maxY;
+  ffi.parentId = node.parentId;
+  ffi.siblingIndex = node.siblingIndex;
+  ffi.headingLevel = node.headingLevel;
+  return ffi;
 }
 
 static SemanticsDiffFFI* toSemanticsDiffFFI(const SemanticsDiff& diff)
 {
-    auto* ffi = new SemanticsDiffFFI();
-    ffi->treeVersion = diff.treeVersion;
-    ffi->frameNumber = static_cast<uint32_t>(diff.frameNumber);
-    ffi->rootId = diff.rootId;
+  auto* ffi = new SemanticsDiffFFI();
+  ffi->treeVersion = diff.treeVersion;
+  ffi->frameNumber = static_cast<uint32_t>(diff.frameNumber);
+  ffi->rootId = diff.rootId;
 
-    // added
-    ffi->addedCount = static_cast<uint32_t>(diff.added.size());
-    if (ffi->addedCount > 0)
-    {
-        auto* arr = new SemanticsDiffNodeFFI[ffi->addedCount];
-        for (uint32_t i = 0; i < ffi->addedCount; ++i)
-            arr[i] = toSemanticsDiffNodeFFI(diff.added[i]);
-        ffi->added = arr;
-    }
-    else
-    {
-        ffi->added = nullptr;
-    }
+  // added
+  ffi->addedCount = static_cast<uint32_t>(diff.added.size());
+  if (ffi->addedCount > 0)
+  {
+    auto* arr = new SemanticsDiffNodeFFI[ffi->addedCount];
+    for (uint32_t i = 0; i < ffi->addedCount; ++i)
+      arr[i] = toSemanticsDiffNodeFFI(diff.added[i]);
+    ffi->added = arr;
+  }
+  else
+  {
+    ffi->added = nullptr;
+  }
 
-    // removed
-    ffi->removedCount = static_cast<uint32_t>(diff.removed.size());
-    if (ffi->removedCount > 0)
+  // removed
+  ffi->removedCount = static_cast<uint32_t>(diff.removed.size());
+  if (ffi->removedCount > 0)
+  {
+    auto* arr = new uint32_t[ffi->removedCount];
+    for (uint32_t i = 0; i < ffi->removedCount; ++i)
     {
-        auto* arr = new uint32_t[ffi->removedCount];
-        for (uint32_t i = 0; i < ffi->removedCount; ++i)
-        {
-            arr[i] = diff.removed[i];
-        }
-        ffi->removed = arr;
+      arr[i] = diff.removed[i];
     }
-    else
-    {
-        ffi->removed = nullptr;
-    }
+    ffi->removed = arr;
+  }
+  else
+  {
+    ffi->removed = nullptr;
+  }
 
-    // moved
-    ffi->movedCount = static_cast<uint32_t>(diff.moved.size());
-    if (ffi->movedCount > 0)
-    {
-        auto* arr = new SemanticsDiffNodeFFI[ffi->movedCount];
-        for (uint32_t i = 0; i < ffi->movedCount; ++i)
-            arr[i] = toSemanticsDiffNodeFFI(diff.moved[i]);
-        ffi->moved = arr;
-    }
-    else
-    {
-        ffi->moved = nullptr;
-    }
+  // moved
+  ffi->movedCount = static_cast<uint32_t>(diff.moved.size());
+  if (ffi->movedCount > 0)
+  {
+    auto* arr = new SemanticsDiffNodeFFI[ffi->movedCount];
+    for (uint32_t i = 0; i < ffi->movedCount; ++i)
+      arr[i] = toSemanticsDiffNodeFFI(diff.moved[i]);
+    ffi->moved = arr;
+  }
+  else
+  {
+    ffi->moved = nullptr;
+  }
 
-    // updatedSemantic
-    ffi->updatedSemanticCount =
-        static_cast<uint32_t>(diff.updatedSemantic.size());
-    if (ffi->updatedSemanticCount > 0)
-    {
-        auto* arr = new SemanticsDiffNodeFFI[ffi->updatedSemanticCount];
-        for (uint32_t i = 0; i < ffi->updatedSemanticCount; ++i)
-            arr[i] = toSemanticsDiffNodeFFI(diff.updatedSemantic[i]);
-        ffi->updatedSemantic = arr;
-    }
-    else
-    {
-        ffi->updatedSemantic = nullptr;
-    }
+  // updatedSemantic
+  ffi->updatedSemanticCount = static_cast<uint32_t>(
+      diff.updatedSemantic.size());
+  if (ffi->updatedSemanticCount > 0)
+  {
+    auto* arr = new SemanticsDiffNodeFFI[ffi->updatedSemanticCount];
+    for (uint32_t i = 0; i < ffi->updatedSemanticCount; ++i)
+      arr[i] = toSemanticsDiffNodeFFI(diff.updatedSemantic[i]);
+    ffi->updatedSemantic = arr;
+  }
+  else
+  {
+    ffi->updatedSemantic = nullptr;
+  }
 
-    // updatedGeometry
-    ffi->updatedGeometryCount =
-        static_cast<uint32_t>(diff.updatedGeometry.size());
-    if (ffi->updatedGeometryCount > 0)
+  // updatedGeometry
+  ffi->updatedGeometryCount = static_cast<uint32_t>(
+      diff.updatedGeometry.size());
+  if (ffi->updatedGeometryCount > 0)
+  {
+    auto* arr = new SemanticsBoundsUpdateFFI[ffi->updatedGeometryCount];
+    for (uint32_t i = 0; i < ffi->updatedGeometryCount; ++i)
     {
-        auto* arr = new SemanticsBoundsUpdateFFI[ffi->updatedGeometryCount];
-        for (uint32_t i = 0; i < ffi->updatedGeometryCount; ++i)
-        {
-            const auto& b = diff.updatedGeometry[i];
-            arr[i].id = b.id;
-            arr[i].minX = b.minX;
-            arr[i].minY = b.minY;
-            arr[i].maxX = b.maxX;
-            arr[i].maxY = b.maxY;
-        }
-        ffi->updatedGeometry = arr;
+      const auto& b = diff.updatedGeometry[i];
+      arr[i].id = b.id;
+      arr[i].minX = b.minX;
+      arr[i].minY = b.minY;
+      arr[i].maxX = b.maxX;
+      arr[i].maxY = b.maxY;
     }
-    else
-    {
-        ffi->updatedGeometry = nullptr;
-    }
+    ffi->updatedGeometry = arr;
+  }
+  else
+  {
+    ffi->updatedGeometry = nullptr;
+  }
 
-    // childrenUpdated
-    ffi->childrenUpdatedCount =
-        static_cast<uint32_t>(diff.childrenUpdated.size());
-    if (ffi->childrenUpdatedCount > 0)
+  // childrenUpdated
+  ffi->childrenUpdatedCount = static_cast<uint32_t>(
+      diff.childrenUpdated.size());
+  if (ffi->childrenUpdatedCount > 0)
+  {
+    auto* arr = new SemanticsChildrenUpdateFFI[ffi->childrenUpdatedCount];
+    for (uint32_t i = 0; i < ffi->childrenUpdatedCount; ++i)
     {
-        auto* arr = new SemanticsChildrenUpdateFFI[ffi->childrenUpdatedCount];
-        for (uint32_t i = 0; i < ffi->childrenUpdatedCount; ++i)
-        {
-            const auto& cu = diff.childrenUpdated[i];
-            arr[i].parentId = cu.parentId;
-            arr[i].childCount = static_cast<uint32_t>(cu.childIds.size());
-            if (arr[i].childCount > 0)
-            {
-                auto* ids = new uint32_t[arr[i].childCount];
-                for (uint32_t j = 0; j < arr[i].childCount; ++j)
-                    ids[j] = cu.childIds[j];
-                arr[i].childIds = ids;
-            }
-            else
-            {
-                arr[i].childIds = nullptr;
-            }
-        }
-        ffi->childrenUpdated = arr;
+      const auto& cu = diff.childrenUpdated[i];
+      arr[i].parentId = cu.parentId;
+      arr[i].childCount = static_cast<uint32_t>(cu.childIds.size());
+      if (arr[i].childCount > 0)
+      {
+        auto* ids = new uint32_t[arr[i].childCount];
+        for (uint32_t j = 0; j < arr[i].childCount; ++j)
+          ids[j] = cu.childIds[j];
+        arr[i].childIds = ids;
+      }
+      else
+      {
+        arr[i].childIds = nullptr;
+      }
     }
-    else
-    {
-        ffi->childrenUpdated = nullptr;
-    }
+    ffi->childrenUpdated = arr;
+  }
+  else
+  {
+    ffi->childrenUpdated = nullptr;
+  }
 
-    return ffi;
+  return ffi;
 }
 
 EXPORT void stateMachineEnableSemantics(WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-        return;
-    wrappedMachine->stateMachine()->enableSemantics();
+  if (wrappedMachine == nullptr)
+    return;
+  wrappedMachine->stateMachine()->enableSemantics();
 }
 
 EXPORT SemanticsDiffFFI* stateMachineDrainSemanticsDiff(
     WrappedStateMachine* wrappedMachine)
 {
-    if (wrappedMachine == nullptr)
-        return nullptr;
-    auto* manager = wrappedMachine->stateMachine()->semanticManager();
-    if (manager == nullptr)
-        return nullptr;
-    auto diff = manager->drainDiff();
-    if (diff.empty())
-        return nullptr;
-    return toSemanticsDiffFFI(diff);
+  if (wrappedMachine == nullptr)
+    return nullptr;
+  auto* manager = wrappedMachine->stateMachine()->semanticManager();
+  if (manager == nullptr)
+    return nullptr;
+  auto diff = manager->drainDiff();
+  if (diff.empty())
+    return nullptr;
+  return toSemanticsDiffFFI(diff);
 }
 
-EXPORT bool stateMachineFocusSemanticNode(WrappedStateMachine* wrappedMachine,
-                                          uint32_t semanticNodeId)
+EXPORT bool stateMachineFocusSemanticNode(
+    WrappedStateMachine* wrappedMachine,
+    uint32_t semanticNodeId)
 {
-    if (wrappedMachine == nullptr)
-        return false;
-    auto* manager = wrappedMachine->stateMachine()->semanticManager();
-    if (manager == nullptr)
-        return false;
-    return manager->requestFocus(semanticNodeId);
+  if (wrappedMachine == nullptr)
+    return false;
+  auto* manager = wrappedMachine->stateMachine()->semanticManager();
+  if (manager == nullptr)
+    return false;
+  return manager->requestFocus(semanticNodeId);
 }
 
-EXPORT void stateMachineFireSemanticAction(WrappedStateMachine* wrappedMachine,
-                                           uint32_t semanticNodeId,
-                                           uint8_t actionType)
+EXPORT void stateMachineFireSemanticAction(
+    WrappedStateMachine* wrappedMachine,
+    uint32_t semanticNodeId,
+    uint8_t actionType)
 {
-    if (wrappedMachine == nullptr)
-        return;
-    wrappedMachine->stateMachine()->fireSemanticAction(
-        semanticNodeId,
-        static_cast<rive::SemanticActionType>(actionType));
+  if (wrappedMachine == nullptr)
+    return;
+  wrappedMachine->stateMachine()->fireSemanticAction(
+      semanticNodeId,
+      static_cast<rive::SemanticActionType>(actionType));
 }
 
 EXPORT void freeSemanticDiff(SemanticsDiffFFI* diff)
 {
-    if (diff == nullptr)
-        return;
+  if (diff == nullptr)
+    return;
 
-    auto freeNodes = [](const SemanticsDiffNodeFFI* arr, uint32_t count) {
-        if (arr == nullptr)
-            return;
-        for (uint32_t i = 0; i < count; ++i)
-        {
-            // Strings were allocated by toCString (malloc), free with std::free
-            if (arr[i].label != nullptr)
-                std::free((void*)arr[i].label);
-            if (arr[i].value != nullptr)
-                std::free((void*)arr[i].value);
-            if (arr[i].hint != nullptr)
-                std::free((void*)arr[i].hint);
-        }
-        delete[] arr;
-    };
-
-    freeNodes(diff->added, diff->addedCount);
-    delete[] diff->removed;
-    freeNodes(diff->moved, diff->movedCount);
-    freeNodes(diff->updatedSemantic, diff->updatedSemanticCount);
-    // updatedGeometry is POD (no heap strings) — simple delete[] suffices.
-    delete[] diff->updatedGeometry;
-
-    if (diff->childrenUpdated != nullptr)
+  auto freeNodes = [](const SemanticsDiffNodeFFI* arr, uint32_t count) {
+    if (arr == nullptr)
+      return;
+    for (uint32_t i = 0; i < count; ++i)
     {
-        for (uint32_t i = 0; i < diff->childrenUpdatedCount; ++i)
-        {
-            delete[] diff->childrenUpdated[i].childIds;
-        }
-        delete[] diff->childrenUpdated;
+      // Strings were allocated by toCString (malloc), free with std::free
+      if (arr[i].label != nullptr)
+        std::free((void*)arr[i].label);
+      if (arr[i].value != nullptr)
+        std::free((void*)arr[i].value);
+      if (arr[i].hint != nullptr)
+        std::free((void*)arr[i].hint);
     }
+    delete[] arr;
+  };
 
-    delete diff;
+  freeNodes(diff->added, diff->addedCount);
+  delete[] diff->removed;
+  freeNodes(diff->moved, diff->movedCount);
+  freeNodes(diff->updatedSemantic, diff->updatedSemanticCount);
+  // updatedGeometry is POD (no heap strings) — simple delete[] suffices.
+  delete[] diff->updatedGeometry;
+
+  if (diff->childrenUpdated != nullptr)
+  {
+    for (uint32_t i = 0; i < diff->childrenUpdatedCount; ++i)
+    {
+      delete[] diff->childrenUpdated[i].childIds;
+    }
+    delete[] diff->childrenUpdated;
+  }
+
+  delete diff;
 }
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(RiveBinding)
 {
-    function("loadRiveFile", &loadRiveFile, allow_raw_pointers());
-    function("stateMachineReportedEventAt", &stateMachineReportedEventAt);
-    function("viewModelRuntimeProperties", &viewModelRuntimeProperties);
-    function("fileEnums", &fileEnums);
-    function("vmiRuntimeProperties", &vmiRuntimeProperties);
-    function("getEventCustomProperty", &getEventCustomProperty);
-    function("setArtboardLayoutChangedCallback",
-             &setArtboardLayoutChangedCallback);
-    function("setArtboardLayoutDirtyCallback", &setArtboardLayoutDirtyCallback);
-    function("setArtboardTransformDirtyCallback",
-             &setArtboardTransformDirtyCallback);
-    function("setStateMachineInputChangedCallback",
-             &setStateMachineInputChangedCallback);
-    function("setArtboardEventCallback", &setArtboardEventCallback);
-    function("setStateMachineDataBindChangedCallback",
-             &setStateMachineDataBindChangedCallback);
-    function("initBindingCallbacks", &initBindingCallbacks);
-    function("setArtboardTestBoundsCallback", &setArtboardTestBoundsCallback);
-    function("setArtboardIsAncestorCallback", &setArtboardIsAncestorCallback);
-    function("setArtboardRootTransformCallback",
-             &setArtboardRootTransformCallback);
-    function("artboardGetAllTextRuns", &artboardGetAllTextRuns);
-    // Profiler functions (stubs unless built with RIVE_MICROPROFILE)
-    function("profilerStart", &profilerStart);
-    function("profilerStop", &profilerStop);
-    function("profilerIsActive", &profilerIsActive);
-    function("profilerDump", &profilerDump);
-    // Return the buffer address as an integer so embind doesn't need to bind
-    // `const uint8_t*` (which triggers UnboundTypeError at call time).
-    function(
-        "profilerGetBufferPtr",
-        +[]() -> uintptr_t {
-            return reinterpret_cast<uintptr_t>(profilerGetBufferPtr());
-        });
-    function("profilerGetBufferSize", &profilerGetBufferSize);
-    function("profilerFreeBuffer", &profilerFreeBuffer);
-    function("profilerEndFrame", &profilerEndFrame);
+  function("loadRiveFile", &loadRiveFile, allow_raw_pointers());
+  function("stateMachineReportedEventAt", &stateMachineReportedEventAt);
+  function("viewModelRuntimeProperties", &viewModelRuntimeProperties);
+  function("fileEnums", &fileEnums);
+  function("vmiRuntimeProperties", &vmiRuntimeProperties);
+  function("getEventCustomProperty", &getEventCustomProperty);
+  function(
+      "setArtboardLayoutChangedCallback",
+      &setArtboardLayoutChangedCallback);
+  function("setArtboardLayoutDirtyCallback", &setArtboardLayoutDirtyCallback);
+  function(
+      "setArtboardTransformDirtyCallback",
+      &setArtboardTransformDirtyCallback);
+  function(
+      "setStateMachineInputChangedCallback",
+      &setStateMachineInputChangedCallback);
+  function("setArtboardEventCallback", &setArtboardEventCallback);
+  function(
+      "setStateMachineDataBindChangedCallback",
+      &setStateMachineDataBindChangedCallback);
+  function("initBindingCallbacks", &initBindingCallbacks);
+  function("initInterpolatorCallbacks", &initInterpolatorCallbacks);
+  function("setArtboardTestBoundsCallback", &setArtboardTestBoundsCallback);
+  function("setArtboardIsAncestorCallback", &setArtboardIsAncestorCallback);
+  function(
+      "setArtboardRootTransformCallback",
+      &setArtboardRootTransformCallback);
+  function("artboardGetAllTextRuns", &artboardGetAllTextRuns);
+  // Profiler functions (stubs unless built with RIVE_MICROPROFILE)
+  function("profilerStart", &profilerStart);
+  function("profilerStop", &profilerStop);
+  function("profilerIsActive", &profilerIsActive);
+  function("profilerDump", &profilerDump);
+  // Return the buffer address as an integer so embind doesn't need to bind
+  // `const uint8_t*` (which triggers UnboundTypeError at call time).
+  function(
+      "profilerGetBufferPtr",
+      +[]() -> uintptr_t {
+        return reinterpret_cast<uintptr_t>(profilerGetBufferPtr());
+      });
+  function("profilerGetBufferSize", &profilerGetBufferSize);
+  function("profilerFreeBuffer", &profilerFreeBuffer);
+  function("profilerEndFrame", &profilerEndFrame);
 
-    // FocusNode creation with WASM callbacks
-    function("makeFocusNodeWasm", &makeFocusNodeWasm);
-    function("disposeFocusNodeWasm", &disposeFocusNodeWasm);
+  // FocusNode creation with WASM callbacks
+  function("makeFocusNodeWasm", &makeFocusNodeWasm);
+  function("disposeFocusNodeWasm", &disposeFocusNodeWasm);
 
-    function("focusManagerGetPrimaryFocusBounds",
-             &focusManagerGetPrimaryFocusBounds);
+  function(
+      "focusManagerGetPrimaryFocusBounds",
+      &focusManagerGetPrimaryFocusBounds);
 
-    // FocusBoundsResult struct for WASM (used by
-    // focusManagerGetPrimaryFocusBounds)
-    value_object<FocusBoundsResult>("FocusBoundsResult")
-        .field("valid", &FocusBoundsResult::valid)
-        .field("minX", &FocusBoundsResult::minX)
-        .field("minY", &FocusBoundsResult::minY)
-        .field("maxX", &FocusBoundsResult::maxX)
-        .field("maxY", &FocusBoundsResult::maxY);
+  // FocusBoundsResult struct for WASM (used by
+  // focusManagerGetPrimaryFocusBounds)
+  value_object<FocusBoundsResult>("FocusBoundsResult")
+      .field("valid", &FocusBoundsResult::valid)
+      .field("minX", &FocusBoundsResult::minX)
+      .field("minY", &FocusBoundsResult::minY)
+      .field("maxX", &FocusBoundsResult::maxX)
+      .field("maxY", &FocusBoundsResult::maxY);
 
 #ifdef WITH_RIVE_TOOLS
-    // FocusManager callbacks — the runtime's setFocusChangedCallback /
-    // setScrollIntoViewCallback only exist WITH_RIVE_TOOLS.
-    function("focusManagerSetFocusChangedCallback",
-             &focusManagerSetFocusChangedCallbackWasm);
-    function("focusManagerSetScrollIntoViewCallback",
-             &focusManagerSetScrollIntoViewCallback);
+  // FocusManager callbacks — the runtime's setFocusChangedCallback /
+  // setScrollIntoViewCallback only exist WITH_RIVE_TOOLS.
+  function(
+      "focusManagerSetFocusChangedCallback",
+      &focusManagerSetFocusChangedCallbackWasm);
+  function(
+      "focusManagerSetScrollIntoViewCallback",
+      &focusManagerSetScrollIntoViewCallback);
 #endif
 
-    value_object<TextRunArrayResult>("TextRunArrayResult")
-        .field("array", &TextRunArrayResult::array)
-        .field("count", &TextRunArrayResult::count);
+  value_object<TextRunArrayResult>("TextRunArrayResult")
+      .field("array", &TextRunArrayResult::array)
+      .field("count", &TextRunArrayResult::count);
 
-    value_object<FlutterRuntimeReportedEvent>("FlutterRuntimeReportedEvent")
-        .field("event", &FlutterRuntimeReportedEvent::event)
-        .field("secondsDelay", &FlutterRuntimeReportedEvent::secondsDelay)
-        .field("type", &FlutterRuntimeReportedEvent::type);
+  value_object<FlutterRuntimeReportedEvent>("FlutterRuntimeReportedEvent")
+      .field("event", &FlutterRuntimeReportedEvent::event)
+      .field("secondsDelay", &FlutterRuntimeReportedEvent::secondsDelay)
+      .field("type", &FlutterRuntimeReportedEvent::type);
 
-    value_object<FlutterRuntimeCustomProperty>("FlutterRuntimeCustomProperty")
-        .field("property", &FlutterRuntimeCustomProperty::property)
-        .field("name", &FlutterRuntimeCustomProperty::name)
-        .field("type", &FlutterRuntimeCustomProperty::type);
+  value_object<FlutterRuntimeCustomProperty>("FlutterRuntimeCustomProperty")
+      .field("property", &FlutterRuntimeCustomProperty::property)
+      .field("name", &FlutterRuntimeCustomProperty::name)
+      .field("type", &FlutterRuntimeCustomProperty::type);
 
 #ifdef WITH_RIVE_TOOLS
-    value_object<ViewModelInstanceBufferResponse>(
-        "ViewModelInstanceBufferResponse")
-        .field("data", &ViewModelInstanceBufferResponse::data)
-        .field("size", &ViewModelInstanceBufferResponse::size);
-    function("requestSerializedViewModelInstanceWasm",
-             optional_override([](WasmPtr file, WasmPtr viewModelInstance)
-                                   -> ViewModelInstanceBufferResponse {
-                 return requestSerializedViewModelInstanceWasm(
-                     (rive::File*)file,
-                     (rive::ViewModelInstance*)viewModelInstance);
-             }));
-    function("freeViewModelInstanceSerializedDataWasm",
-             &freeViewModelInstanceSerializedDataWasm);
+  value_object<ViewModelInstanceBufferResponse>(
+      "ViewModelInstanceBufferResponse")
+      .field("data", &ViewModelInstanceBufferResponse::data)
+      .field("size", &ViewModelInstanceBufferResponse::size);
+  function(
+      "requestSerializedViewModelInstanceWasm",
+      optional_override(
+          [](WasmPtr file,
+             WasmPtr viewModelInstance) -> ViewModelInstanceBufferResponse {
+            return requestSerializedViewModelInstanceWasm(
+                (rive::File*)file,
+                (rive::ViewModelInstance*)viewModelInstance);
+          }));
+  function(
+      "freeViewModelInstanceSerializedDataWasm",
+      &freeViewModelInstanceSerializedDataWasm);
 #endif
 }
 #endif

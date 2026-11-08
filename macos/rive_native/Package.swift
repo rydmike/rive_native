@@ -1,10 +1,11 @@
 // swift-tools-version: 5.9
+import Foundation
 import PackageDescription
 
 // Version and checksum are auto-updated by native/build_xcframework.sh
-let riveNativeVersion = "0.2.0-dev.3+2"
+let riveNativeVersion = "0.2.0-dev.4+1"
 let riveNativeVersionURLComponent = riveNativeVersion.replacingOccurrences(of: "+", with: "%2B")
-let riveNativeChecksum = "de3a75e674dcf9797af67d2caee20396e1e691ef11bc06eca7471de9c4e13344"
+let riveNativeChecksum = "f6ddb789316febbb3c6563a14f460c0cb6fc096b135e993ffca294e8687790a3"
 
 let package = Package(
     name: "rive_native",

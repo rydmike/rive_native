@@ -12,37 +12,17 @@
 #include "rive/core/vector_binary_stream.hpp"
 #include "rive/assets/blob_asset.hpp"
 #include "luau_error_parser.hpp"
+#include "scripted_path_queries.hpp"
+#include "gamepad_invocation.hpp"
 #include "rive/renderer/cmd/deferred_render_resource.hpp"
 #ifdef RIVE_CANVAS
 #include "rive/renderer/render_context.hpp"
 #include <optional>
 #endif
 
-const rive::RawPath& renderPathToRawPath(rive::Factory* factory,
-                                         rive::RenderPath* renderPath);
-
-// A scripted effect's result is read back as a RawPath by whatever consumes it
-// next (the next effect in a group/chain, hit testing, measuring). Deferred
-// paths keep no readable geometry unless they opt in, so mirror what
-// renderer_binding.cpp does for the trim/dash effect paths. Without this the
-// consumer sees an empty path.
-//
-// The seed is pruned to match what renderPath() recorded through
-// addUntrustedRawPath. That copy sits behind the cast so factories with no
-// deferred path, and builds without path queries, don't pay for it.
-static void retainScriptedPathQueries(rive::RenderPath* path,
-                                      const rive::RawPath& seed)
-{
-#ifdef WITH_RIVE_PATH_QUERY
-    auto* deferred = rive::lite_rtti_cast<rive::cmd::DeferredRenderPath*>(path);
-    if (deferred != nullptr)
-    {
-        rive::RawPath queryGeometry(seed);
-        queryGeometry.pruneEmptySegments();
-        deferred->retainQueryGeometry(&queryGeometry);
-    }
-#endif
-}
+const rive::RawPath& renderPathToRawPath(
+    rive::Factory* factory,
+    rive::RenderPath* renderPath);
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -81,456 +61,473 @@ class DartExposedScriptingContext : public ScriptingContext
 {
 public:
 #ifdef __EMSCRIPTEN__
-    std::vector<emscripten::val> closures;
+  std::vector<emscripten::val> closures;
 #endif
-    VectorBinaryStream console;
-    int timeoutMs = 1000;
+  VectorBinaryStream console;
+  int timeoutMs = 1000;
+  // The last timed execution ran past timeoutMs, so its error is ours.
+  bool budgetExceeded = false;
 
-    DartExposedScriptingContext(Factory* factory,
-                                VoidCallback consoleHasDataCallback) :
-        ScriptingContext(factory),
-        m_consoleHasDataCallback(consoleHasDataCallback)
-    {}
+  DartExposedScriptingContext(
+      Factory* factory,
+      VoidCallback consoleHasDataCallback)
+      : ScriptingContext(factory)
+      , m_consoleHasDataCallback(consoleHasDataCallback)
+  {}
 
-    // The editor builds the Lua `Data` global itself in Dart
-    // (ScriptingWorkspaceManager._setupDataGlobal), so File must not also
-    // call initializeLuaData on this VM.
-    bool initializesDataGlobalExternally() const override { return true; }
+  // The editor builds the Lua `Data` global itself in Dart
+  // (ScriptingWorkspaceManager._setupDataGlobal), so File must not also
+  // call initializeLuaData on this VM.
+  bool initializesDataGlobalExternally() const override { return true; }
 
-    int pCall(lua_State* state, int nargs, int nresults) override
+  int pCall(lua_State* state, int nargs, int nresults) override
+  {
+    // calculate stack position for message handler
+    int hpos = lua_gettop(state) - nargs;
+    // Push the error handler from a cached registry ref instead of minting
+    // a fresh CClosure every pcall. The handler is registered lazily on the
+    // first call and lives for the lua_State's lifetime; lua_close tears
+    // the registry down for us when the VM is destroyed.
+    //
+    if (m_errorHandlerRef == LUA_NOREF)
     {
-        // calculate stack position for message handler
-        int hpos = lua_gettop(state) - nargs;
-        // Push the error handler from a cached registry ref instead of minting
-        // a fresh CClosure every pcall. The handler is registered lazily on the
-        // first call and lives for the lua_State's lifetime; lua_close tears
-        // the registry down for us when the VM is destroyed.
-        //
-        if (m_errorHandlerRef == LUA_NOREF)
-        {
-            lua_pushcfunction(state, riveErrorHandler, "riveErrorHandler");
-            m_errorHandlerRef = lua_ref(state, -1);
-            lua_pop(state, 1);
-        }
-        lua_getref(state, m_errorHandlerRef);
-        lua_insert(state, hpos);
+      lua_pushcfunction(state, riveErrorHandler, "riveErrorHandler");
+      m_errorHandlerRef = lua_ref(state, -1);
+      lua_pop(state, 1);
+    }
+    lua_getref(state, m_errorHandlerRef);
+    lua_insert(state, hpos);
 
 #ifdef __EMSCRIPTEN__
-        // Ensure we're in the correct WebGL context before executing any Lua
-        // code. This covers both the Dart-exported riveLuaPCall path (which
-        // already switches, making this a no-op) and C++ internal
-        // rive_lua_pcall calls (e.g. scriptInit, scriptAdvance) that bypass
-        // the Dart wrapper.
-        int vmGL = this->glHandle();
-        int prevGL = vmGL ? emscripten_webgl_get_current_context() : 0;
-        if (vmGL && vmGL != prevGL)
-        {
-            emscripten_webgl_make_context_current(vmGL);
-        }
+    // Ensure we're in the correct WebGL context before executing any Lua
+    // code. This covers both the Dart-exported riveLuaPCall path (which
+    // already switches, making this a no-op) and C++ internal
+    // rive_lua_pcall calls (e.g. scriptInit, scriptAdvance) that bypass
+    // the Dart wrapper.
+    int vmGL = this->glHandle();
+    int prevGL = vmGL ? emscripten_webgl_get_current_context() : 0;
+    if (vmGL && vmGL != prevGL)
+    {
+      emscripten_webgl_make_context_current(vmGL);
+    }
 #endif
 
-        startTimedExecution(state);
-        int ret = lua_pcall(state, nargs, nresults, hpos);
-        endTimedExecution(state);
-        lua_remove(state, hpos);
+    startTimedExecution(state);
+    int ret = lua_pcall(state, nargs, nresults, hpos);
+    endTimedExecution(state);
+    lua_remove(state, hpos);
 
 #ifdef __EMSCRIPTEN__
-        // Restoring 0 binds nothing, which crashes the next unguarded GL call.
-        if (vmGL && prevGL && vmGL != prevGL)
-            emscripten_webgl_make_context_current(prevGL);
+    // Restoring 0 binds nothing, which crashes the next unguarded GL call.
+    if (vmGL && prevGL && vmGL != prevGL)
+      emscripten_webgl_make_context_current(prevGL);
 #endif
 
-        return ret;
-    }
+    return ret;
+  }
 
-    void printError(lua_State* state) override
+  void printError(lua_State* state) override
+  {
+    const char* error = lua_tostring(state, -1);
+    bool pushed = false;
+    if (error == nullptr)
     {
-        const char* error = lua_tostring(state, -1);
-        bool pushed = false;
-        if (error == nullptr)
-        {
-            // The value on top of the stack isn't a string or number (e.g. a
-            // table, nil, or an error object). luaL_tolstring always yields a
-            // string representation (honoring __tostring) so the user sees a
-            // real message instead of an empty console line.
-            size_t len = 0;
-            error = luaL_tolstring(state, -1, &len);
-            pushed = true;
-        }
-        auto parsed = ErrorParser::parse(error);
-        writeError(parsed);
-        if (pushed)
-        {
-            lua_pop(state, 1); // balance luaL_tolstring's pushed string
-        }
+      // The value on top of the stack isn't a string or number (e.g. a
+      // table, nil, or an error object). luaL_tolstring always yields a
+      // string representation (honoring __tostring) so the user sees a
+      // real message instead of an empty console line.
+      size_t len = 0;
+      error = luaL_tolstring(state, -1, &len);
+      pushed = true;
     }
-
-    void printBeginLine(lua_State* state) override
+    auto parsed = ErrorParser::parse(error);
+    writeError(parsed);
+    if (pushed)
     {
-        BinaryWriter writer(&console);
-        lua_Debug ar;
-        lua_getinfo(state, 1, "sl", &ar);
-        writer.write((uint8_t)0);
-        writer.write(ar.source);
-        writer.writeVarUint((uint32_t)ar.currentline);
+      lua_pop(state, 1); // balance luaL_tolstring's pushed string
     }
+  }
 
-    void writeError(const ErrorParser::ParsedError& error)
+  void printBeginLine(lua_State* state) override
+  {
+    BinaryWriter writer(&console);
+    lua_Debug ar;
+    lua_getinfo(state, 1, "sl", &ar);
+    writer.write((uint8_t)0);
+    writer.write(ar.source);
+    writer.writeVarUint((uint32_t)ar.currentline);
+  }
+
+  void writeError(const ErrorParser::ParsedError& error)
+  {
+    BinaryWriter writer(&console);
+    writer.write((uint8_t)1);
+
+    writer.writeVarUint((uint64_t)error.filename.size());
+    writer.write(
+        (const uint8_t*)error.filename.data(),
+        (size_t)error.filename.size());
+
+    writer.writeVarUint((uint32_t)error.line_number.value_or(0));
+
+    // The reader treats a zero-length span as the span-list terminator,
+    // and printEndLine() writes that terminator below. Only emit the
+    // message as a span when it's non-empty; otherwise a 0-length span
+    // here plus the terminator would write two consecutive zero bytes,
+    // desyncing the reader for every subsequent console entry.
+    if (error.message.size() > 0)
     {
-        BinaryWriter writer(&console);
-        writer.write((uint8_t)1);
-
-        writer.writeVarUint((uint64_t)error.filename.size());
-        writer.write((const uint8_t*)error.filename.data(),
-                     (size_t)error.filename.size());
-
-        writer.writeVarUint((uint32_t)error.line_number.value_or(0));
-
-        // The reader treats a zero-length span as the span-list terminator,
-        // and printEndLine() writes that terminator below. Only emit the
-        // message as a span when it's non-empty; otherwise a 0-length span
-        // here plus the terminator would write two consecutive zero bytes,
-        // desyncing the reader for every subsequent console entry.
-        if (error.message.size() > 0)
-        {
-            writer.writeVarUint((uint64_t)error.message.size());
-            writer.write((const uint8_t*)error.message.data(),
-                         (size_t)error.message.size());
-        }
-        printEndLine();
+      writer.writeVarUint((uint64_t)error.message.size());
+      writer.write(
+          (const uint8_t*)error.message.data(),
+          (size_t)error.message.size());
     }
+    printEndLine();
+  }
 
-    void print(Span<const char> data) override
+  void print(Span<const char> data) override
+  {
+    if (data.size() == 0)
     {
-        if (data.size() == 0)
-        {
-            return;
-        }
-        BinaryWriter writer(&console);
-        writer.writeVarUint((uint64_t)data.size());
-        writer.write((const uint8_t*)data.data(), (size_t)data.size());
+      return;
     }
+    BinaryWriter writer(&console);
+    writer.writeVarUint((uint64_t)data.size());
+    writer.write((const uint8_t*)data.data(), (size_t)data.size());
+  }
 
-    void printEndLine() override
+  // Every reader of this buffer joins the spans with its own separator
+  // (the editor's console inserts a space), so one here would be read back
+  // on top of theirs.
+  void printSeparator() override {}
+
+  void printEndLine() override
+  {
+    BinaryWriter writer(&console);
+    writer.writeVarUint((uint32_t)0);
+    // Fires inside lua_pcall's setjmp scope. The Dart-side dispatcher
+    // must be NativeCallable.listener (async); sync re-entry corrupts
+    // Dart's GC stack walk.
+    if (!m_calledConsoleCallback)
     {
-        BinaryWriter writer(&console);
-        writer.writeVarUint((uint32_t)0);
-        // Fires inside lua_pcall's setjmp scope. The Dart-side dispatcher
-        // must be NativeCallable.listener (async); sync re-entry corrupts
-        // Dart's GC stack walk.
-        if (!m_calledConsoleCallback)
-        {
-            m_calledConsoleCallback = true;
-            m_consoleHasDataCallback();
-        }
+      m_calledConsoleCallback = true;
+      m_consoleHasDataCallback();
     }
+  }
 
-    void clearConsole()
+  void clearConsole()
+  {
+    console.clear();
+    m_calledConsoleCallback = false;
+  }
+
+  Span<uint8_t> consoleMemory() { return console.memory(); }
+
+  void startTimedExecution(lua_State* state)
+  {
+    budgetExceeded = false;
+    if (timeoutMs == 0)
     {
-        console.clear();
-        m_calledConsoleCallback = false;
+      return; // No timeout
     }
+    lua_Callbacks* cb = lua_callbacks(state);
+    cb->interrupt = interrupt;
+    executionTime = std::chrono::steady_clock::now();
+  }
 
-    Span<uint8_t> consoleMemory() { return console.memory(); }
+  void endTimedExecution(lua_State* state)
+  {
+    lua_Callbacks* cb = lua_callbacks(state);
+    cb->interrupt = nullptr;
+  }
 
-    void startTimedExecution(lua_State* state)
-    {
-        if (timeoutMs == 0)
-        {
-            return; // No timeout
-        }
-        lua_Callbacks* cb = lua_callbacks(state);
-        cb->interrupt = interrupt;
-        executionTime = std::chrono::steady_clock::now();
-    }
-
-    void endTimedExecution(lua_State* state)
-    {
-        lua_Callbacks* cb = lua_callbacks(state);
-        cb->interrupt = nullptr;
-    }
-
-    std::chrono::time_point<std::chrono::steady_clock> executionTime;
+  std::chrono::time_point<std::chrono::steady_clock> executionTime;
 
 private:
-    VoidCallback m_consoleHasDataCallback;
-    bool m_calledConsoleCallback = false;
-    // Lua registry ref to a cached riveErrorHandler CClosure. Populated on the
-    // first pCall and reused for the lua_State's lifetime. See pCall() above.
-    int m_errorHandlerRef = LUA_NOREF;
+  VoidCallback m_consoleHasDataCallback;
+  bool m_calledConsoleCallback = false;
+  // Lua registry ref to a cached riveErrorHandler CClosure. Populated on the
+  // first pCall and reused for the lua_State's lifetime. See pCall() above.
+  int m_errorHandlerRef = LUA_NOREF;
 };
 
 static void interrupt(lua_State* L, int gc)
 {
-    if (gc >= 0)
+  if (gc >= 0)
+  {
+    return;
+  }
+
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
+
+  if (context == nullptr)
+  {
+    return;
+  }
+
+  const auto now = std::chrono::steady_clock::now();
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - context->executionTime)
+                .count();
+  if (ms > context->timeoutMs)
+  {
+    // Stays installed so a pcall that swallows this error cannot outrun it.
+    context->budgetExceeded = true;
+    // reserve space for error string
+    lua_rawcheckstack(L, 1);
+
+    // Format human-readable error message
+    char errorMsg[128];
+    if (context->timeoutMs >= 1000)
     {
-        return;
+      double seconds = context->timeoutMs / 1000.0;
+      snprintf(
+          errorMsg,
+          sizeof(errorMsg),
+          "execution exceeded %.1f second%s timeout",
+          seconds,
+          seconds == 1.0 ? "" : "s");
     }
-
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
-
-    if (context == nullptr)
+    else
     {
-        return;
+      snprintf(
+          errorMsg,
+          sizeof(errorMsg),
+          "execution exceeded %d millisecond%s timeout",
+          context->timeoutMs,
+          context->timeoutMs == 1 ? "" : "s");
     }
-
-    const auto now = std::chrono::steady_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now - context->executionTime)
-                  .count();
-    if (ms > context->timeoutMs)
-    {
-        lua_Callbacks* cb = lua_callbacks(L);
-        cb->interrupt = nullptr;
-        // reserve space for error string
-        lua_rawcheckstack(L, 1);
-
-        // Format human-readable error message
-        char errorMsg[128];
-        if (context->timeoutMs >= 1000)
-        {
-            double seconds = context->timeoutMs / 1000.0;
-            snprintf(errorMsg,
-                     sizeof(errorMsg),
-                     "execution exceeded %.1f second%s timeout",
-                     seconds,
-                     seconds == 1.0 ? "" : "s");
-        }
-        else
-        {
-            snprintf(errorMsg,
-                     sizeof(errorMsg),
-                     "execution exceeded %d millisecond%s timeout",
-                     context->timeoutMs,
-                     context->timeoutMs == 1 ? "" : "s");
-        }
-        luaL_error(L, "%s", errorMsg);
-    }
+    luaL_error(L, "%s", errorMsg);
+  }
 }
 
 struct RiveLuauBufferResponse
 {
 #ifdef __EMSCRIPTEN__
-    WasmPtr data;
+  WasmPtr data;
 #else
-    uint8_t* data;
+  uint8_t* data;
 #endif
-    size_t size;
+  size_t size;
 };
 
 EXPORT RiveLuauBufferResponse riveLuaConsole(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return {
-#ifdef __EMSCRIPTEN__
-            (WasmPtr) nullptr,
-#else
-            nullptr,
-#endif
-            0};
-    }
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(state));
-    auto memory = context->consoleMemory();
-
+  if (state == nullptr)
+  {
     return {
 #ifdef __EMSCRIPTEN__
-        (WasmPtr)memory.data(),
+        (WasmPtr) nullptr,
 #else
-        memory.data(),
+        nullptr,
 #endif
-        memory.size()};
+        0};
+  }
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(
+          lua_getthreaddata(state));
+  auto memory = context->consoleMemory();
+
+  return {
+#ifdef __EMSCRIPTEN__
+      (WasmPtr)memory.data(),
+#else
+      memory.data(),
+#endif
+      memory.size()};
 }
 
 EXPORT void riveLuaConsoleClear(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(state));
-    context->clearConsole();
+  if (state == nullptr)
+  {
+    return;
+  }
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(
+          lua_getthreaddata(state));
+  context->clearConsole();
 }
 
 // Creates a ScriptingVM that owns both the lua_State and context.
-EXPORT ExternalPointer riveVMCreate(ExternalPointer factory,
-                                    VoidCallback consoleHasDataCallback)
+EXPORT ExternalPointer
+riveVMCreate(ExternalPointer factory, VoidCallback consoleHasDataCallback)
 {
-    auto context =
-        std::make_unique<DartExposedScriptingContext>((Factory*)factory,
-                                                      consoleHasDataCallback);
-    auto* vm = new ScriptingVM(std::move(context));
-    return (ExternalPointer)vm;
+  auto context = std::make_unique<DartExposedScriptingContext>(
+      (Factory*)factory,
+      consoleHasDataCallback);
+  auto* vm = new ScriptingVM(std::move(context));
+  return (ExternalPointer)vm;
 }
 
 // Releases a reference to a ScriptingVM. The VM will be destroyed when
 // all references (including those held by ScriptedObjects) are released.
 EXPORT void riveVMDestroy(ExternalPointer vmPtr)
 {
-    if (!vmPtr)
-    {
-        return;
-    }
-    static_cast<ScriptingVM*>((void*)vmPtr)->unref();
+  if (!vmPtr)
+  {
+    return;
+  }
+  static_cast<ScriptingVM*>((void*)vmPtr)->unref();
 }
 
 // Reports the presenting surface's device pixels per layout point; a
 // change re-announces every scripted layout's size.
 EXPORT void riveVMDisplayScale(ExternalPointer vmPtr, float scale)
 {
-    if (!vmPtr)
-    {
-        return;
-    }
-    static_cast<ScriptingVM*>((void*)vmPtr)->displayScale(scale);
+  if (!vmPtr)
+  {
+    return;
+  }
+  static_cast<ScriptingVM*>((void*)vmPtr)->displayScale(scale);
 }
 
 // Gets the lua_State* from a ScriptingVM (for operations that need it).
 EXPORT lua_State* riveVMGetState(ExternalPointer vmPtr)
 {
-    if (!vmPtr)
-    {
-        return nullptr;
-    }
-    return static_cast<ScriptingVM*>((void*)vmPtr)->state();
+  if (!vmPtr)
+  {
+    return nullptr;
+  }
+  return static_cast<ScriptingVM*>((void*)vmPtr)->state();
 }
 
 // Gets console output from a ScriptingVM.
 EXPORT RiveLuauBufferResponse riveVMConsole(ExternalPointer vmPtr)
 {
-    if (!vmPtr)
-    {
-        return {
-#ifdef __EMSCRIPTEN__
-            (WasmPtr) nullptr,
-#else
-            nullptr,
-#endif
-            0};
-    }
-    auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
-    auto* context = static_cast<DartExposedScriptingContext*>(vm->context());
-    auto memory = context->consoleMemory();
+  if (!vmPtr)
+  {
     return {
 #ifdef __EMSCRIPTEN__
-        (WasmPtr)memory.data(),
+        (WasmPtr) nullptr,
 #else
-        memory.data(),
+        nullptr,
 #endif
-        memory.size()};
+        0};
+  }
+  auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
+  auto* context = static_cast<DartExposedScriptingContext*>(vm->context());
+  auto memory = context->consoleMemory();
+  return {
+#ifdef __EMSCRIPTEN__
+      (WasmPtr)memory.data(),
+#else
+      memory.data(),
+#endif
+      memory.size()};
 }
 
 // Clears console output from a ScriptingVM.
 EXPORT void riveVMConsoleClear(ExternalPointer vmPtr)
 {
-    if (!vmPtr)
-    {
-        return;
-    }
-    auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
-    auto* context = static_cast<DartExposedScriptingContext*>(vm->context());
-    context->clearConsole();
+  if (!vmPtr)
+  {
+    return;
+  }
+  auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
+  auto* context = static_cast<DartExposedScriptingContext*>(vm->context());
+  context->clearConsole();
 }
 
 // Calls a function in the ScriptingVM.
 EXPORT void riveVMCall(ExternalPointer vmPtr, int nargs, int nresults)
 {
-    if (!vmPtr)
-    {
-        return;
-    }
-    auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
-    try
-    {
-        lua_call(vm->state(), nargs, nresults);
-    }
-    catch (const std::exception& ex)
-    {
-        fprintf(stderr, "got lua exception %s\n", ex.what());
-    }
+  if (!vmPtr)
+  {
+    return;
+  }
+  auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
+  try
+  {
+    lua_call(vm->state(), nargs, nresults);
+  }
+  catch (const std::exception& ex)
+  {
+    fprintf(stderr, "got lua exception %s\n", ex.what());
+  }
 }
 
 // Registers a module in the ScriptingVM.
-EXPORT bool riveVMRegisterModule(ExternalPointer vmPtr,
-                                 const char* name,
-                                 const char* data,
-                                 size_t size)
+EXPORT bool riveVMRegisterModule(
+    ExternalPointer vmPtr,
+    const char* name,
+    const char* data,
+    size_t size)
 {
-    if (!vmPtr)
-    {
-        return false;
-    }
-    auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
-    auto* context = static_cast<DartExposedScriptingContext*>(vm->context());
-    context->startTimedExecution(vm->state());
-    auto result =
-        ScriptingVM::registerModule(vm->state(),
-                                    name,
-                                    Span<uint8_t>((uint8_t*)data, size));
-    context->endTimedExecution(vm->state());
-    return result;
+  if (!vmPtr)
+  {
+    return false;
+  }
+  auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
+  auto* context = static_cast<DartExposedScriptingContext*>(vm->context());
+  context->startTimedExecution(vm->state());
+  auto result = ScriptingVM::registerModule(
+      vm->state(),
+      name,
+      Span<uint8_t>((uint8_t*)data, size));
+  context->endTimedExecution(vm->state());
+  return result;
 }
 
 // Unregisters a module from the ScriptingVM.
 EXPORT void riveVMUnregisterModule(ExternalPointer vmPtr, const char* name)
 {
-    if (!vmPtr)
-    {
-        return;
-    }
-    auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
-    ScriptingVM::unregisterModule(vm->state(), name);
+  if (!vmPtr)
+  {
+    return;
+  }
+  auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
+  ScriptingVM::unregisterModule(vm->state(), name);
 }
 
 // Adopts a ScriptingVM from ScriptingWorkspace, replacing its context with
 // a DartExposedScriptingContext. The old context is properly cleaned up.
 // On emscripten, glHandle is the WebGL context handle for this VM's renderer.
-EXPORT void riveVMAdopt(ExternalPointer vmPtr,
-                        ExternalPointer factory,
-                        VoidCallback consoleHasDataCallback
+EXPORT void riveVMAdopt(
+    ExternalPointer vmPtr,
+    ExternalPointer factory,
+    VoidCallback consoleHasDataCallback
 #ifdef __EMSCRIPTEN__
-                        ,
-                        int glHandle
+    ,
+    int glHandle
 #endif
 )
 {
-    if (!vmPtr)
-    {
-        return;
-    }
-    auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
+  if (!vmPtr)
+  {
+    return;
+  }
+  auto* vm = static_cast<ScriptingVM*>((void*)vmPtr);
 
-    // Create a DartExposedScriptingContext with the factory and console
-    // callback. replaceContext handles cleanup of old context and updates
-    // lua thread data.
-    auto newContext =
-        std::make_unique<DartExposedScriptingContext>((Factory*)factory,
-                                                      consoleHasDataCallback);
+  // Create a DartExposedScriptingContext with the factory and console
+  // callback. replaceContext handles cleanup of old context and updates
+  // lua thread data.
+  auto newContext = std::make_unique<DartExposedScriptingContext>(
+      (Factory*)factory,
+      consoleHasDataCallback);
 
 #ifdef WITH_RIVE_TOOLS
-    // Transfer compiled WGSL→RSTB blobs and the render context from the old
-    // context before it is destroyed by replaceContext. Without this,
-    // loadShader() / context:gpuCanvas() would find an empty map and a null
-    // context in the new DartExposedScriptingContext. Ore and canvas host
-    // routing derive from the factory, which both contexts share.
-    if (auto* oldCtx = vm->context())
+  // Transfer compiled WGSL→RSTB blobs and the render context from the old
+  // context before it is destroyed by replaceContext. Without this,
+  // loadShader() / context:gpuCanvas() would find an empty map and a null
+  // context in the new DartExposedScriptingContext. Ore and canvas host
+  // routing derive from the factory, which both contexts share.
+  if (auto* oldCtx = vm->context())
+  {
+    auto rstbs = oldCtx->takeShaderRstbs();
+    for (auto& kv : rstbs)
     {
-        auto rstbs = oldCtx->takeShaderRstbs();
-        for (auto& kv : rstbs)
-        {
-            newContext->registerShaderRstb(kv.first, std::move(kv.second));
-        }
-        newContext->setRenderContext(oldCtx->renderContext());
+      newContext->registerShaderRstb(kv.first, std::move(kv.second));
     }
+    newContext->setRenderContext(oldCtx->renderContext());
+  }
 #endif
 #ifdef __EMSCRIPTEN__
-    newContext->setGLHandle(glHandle);
+  newContext->setGLHandle(glHandle);
 #endif
 
-    vm->replaceContext(std::move(newContext));
+  vm->replaceContext(std::move(newContext));
 }
 
 #ifdef RIVE_CANVAS
@@ -539,43 +536,45 @@ EXPORT void riveVMAdopt(ExternalPointer vmPtr,
 // before executing Lua — the ore context IS the RenderTexture identity.
 EXPORT ExternalPointer riveLuaGetVMOreCtxPtr(lua_State* L)
 {
-    auto* ctx = static_cast<rive::ScriptingContext*>(lua_getthreaddata(L));
-    return ctx ? reinterpret_cast<ExternalPointer>(ctx->oreContext()) : 0;
+  auto* ctx = static_cast<rive::ScriptingContext*>(lua_getthreaddata(L));
+  return ctx ? reinterpret_cast<ExternalPointer>(ctx->oreContext()) : 0;
 }
 
 #endif // RIVE_CANVAS
 
 EXPORT void riveLuaCall(lua_State* state, int nargs, int nresults)
 {
-    try
-    {
-        lua_call(state, nargs, nresults);
-    }
-    catch (const std::exception& ex)
-    {
-        fprintf(stderr, "got lua exception %s\n", ex.what());
-    }
+  try
+  {
+    lua_call(state, nargs, nresults);
+  }
+  catch (const std::exception& ex)
+  {
+    fprintf(stderr, "got lua exception %s\n", ex.what());
+  }
 }
 
-EXPORT bool riveLuaRegisterModule(lua_State* state,
-                                  const char* name,
-                                  const char* data,
-                                  size_t size)
+EXPORT bool riveLuaRegisterModule(
+    lua_State* state,
+    const char* name,
+    const char* data,
+    size_t size)
 {
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(state));
-    context->startTimedExecution(state);
-    auto result =
-        ScriptingVM::registerModule(state,
-                                    name,
-                                    Span<uint8_t>((uint8_t*)data, size));
-    context->endTimedExecution(state);
-    return result;
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(
+          lua_getthreaddata(state));
+  context->startTimedExecution(state);
+  auto result = ScriptingVM::registerModule(
+      state,
+      name,
+      Span<uint8_t>((uint8_t*)data, size));
+  context->endTimedExecution(state);
+  return result;
 }
 
 EXPORT void riveLuaUnregisterModule(lua_State* state, const char* name)
 {
-    ScriptingVM::unregisterModule(state, name);
+  ScriptingVM::unregisterModule(state, name);
 }
 
 // Properties created while a host-owned tag is set (a FileFormat view's
@@ -584,51 +583,53 @@ EXPORT void riveLuaUnregisterModule(lua_State* state, const char* name)
 EXPORT void riveLuaSetPropertyOwnerTag(lua_State* state, uint32_t tag)
 {
 #ifdef WITH_RIVE_TOOLS
-    auto context = static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context != nullptr)
-    {
-        context->orphanOwnerTag(tag);
-    }
+  auto context = static_cast<ScriptingContext*>(lua_getthreaddata(state));
+  if (context != nullptr)
+  {
+    context->orphanOwnerTag(tag);
+  }
 #endif
 }
 
 EXPORT void riveLuaDisposeOrphanProperties(lua_State* state, uint32_t tag)
 {
 #ifdef WITH_RIVE_TOOLS
-    auto context = static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context != nullptr)
-    {
-        context->disposeOrphanScriptedProperties(tag);
-    }
+  auto context = static_cast<ScriptingContext*>(lua_getthreaddata(state));
+  if (context != nullptr)
+  {
+    context->disposeOrphanScriptedProperties(tag);
+  }
 #endif
 }
 
 EXPORT void riveLuaCreateMetaTable(lua_State* state, const char* name)
 {
-    // create metatable for T
-    luaL_newmetatable(state, name);
-    lua_pop(state, 1);
+  // create metatable for T
+  luaL_newmetatable(state, name);
+  lua_pop(state, 1);
 }
 
-EXPORT int riveLuaCreateViewModelInstance(lua_State* state,
-                                          File* file,
-                                          const char* viewModelName)
+EXPORT int riveLuaCreateViewModelInstance(
+    lua_State* state,
+    File* file,
+    const char* viewModelName)
 {
-    if (file == nullptr)
-    {
-        return 0;
-    }
-    rcp<ViewModelInstance> vmi = file->createViewModelInstance(viewModelName);
-    if (vmi)
-    {
-
-        lua_newrive<ScriptedViewModel>(state,
-                                       state,
-                                       ref_rcp(vmi->viewModel()),
-                                       vmi);
-        return 1;
-    }
+  if (file == nullptr)
+  {
     return 0;
+  }
+  rcp<ViewModelInstance> vmi = file->createViewModelInstance(viewModelName);
+  if (vmi)
+  {
+
+    lua_newrive<ScriptedViewModel>(
+        state,
+        state,
+        ref_rcp(vmi->viewModel()),
+        vmi);
+    return 1;
+  }
+  return 0;
 }
 
 EXPORT int riveLuaCreateViewModelInstanceFromInstance(
@@ -637,135 +638,141 @@ EXPORT int riveLuaCreateViewModelInstanceFromInstance(
     const char* viewModelName,
     const char* viewModelInstanceName)
 {
-    if (file == nullptr)
-    {
-        return 0;
-    }
-    rcp<ViewModelInstance> vmi =
-        file->createViewModelInstance(viewModelName, viewModelInstanceName);
-    if (vmi)
-    {
-
-        lua_newrive<ScriptedViewModel>(state,
-                                       state,
-                                       ref_rcp(vmi->viewModel()),
-                                       vmi);
-        return 1;
-    }
+  if (file == nullptr)
+  {
     return 0;
+  }
+  rcp<ViewModelInstance> vmi = file->createViewModelInstance(
+      viewModelName,
+      viewModelInstanceName);
+  if (vmi)
+  {
+
+    lua_newrive<ScriptedViewModel>(
+        state,
+        state,
+        ref_rcp(vmi->viewModel()),
+        vmi);
+    return 1;
+  }
+  return 0;
 }
 
-EXPORT bool riveLuaRegisterScript(lua_State* state,
-                                  const char* name,
-                                  const char* data,
-                                  size_t size)
+EXPORT bool riveLuaRegisterScript(
+    lua_State* state,
+    const char* name,
+    const char* data,
+    size_t size)
 {
-    return ScriptingVM::registerScript(state,
-                                       name,
-                                       Span<uint8_t>((uint8_t*)data, size));
+  return ScriptingVM::registerScript(
+      state,
+      name,
+      Span<uint8_t>((uint8_t*)data, size));
 }
 
 EXPORT void riveStackDump(lua_State* state);
 // Example C function to serve as an error handler
 static int riveErrorHandler(lua_State* L)
 {
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
-    context->printError(L);
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
+  context->printError(L);
 
-    // lua_Debug ar;
-    // lua_getinfo(L, 1, "sl", &ar);
-    // // writer.write(ar.source);
-    // // writer.writeVarUint((uint32_t)ar.currentline);
-    // fprintf(stderr,
-    //         "the source and line: %s %i\n",
-    //         ar.source,
-    //         (uint32_t)ar.currentline);
-    // DartExposedScriptingContext* context =
-    //     static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
-    // auto memory = context->consoleMemory();
+  // lua_Debug ar;
+  // lua_getinfo(L, 1, "sl", &ar);
+  // // writer.write(ar.source);
+  // // writer.writeVarUint((uint32_t)ar.currentline);
+  // fprintf(stderr,
+  //         "the source and line: %s %i\n",
+  //         ar.source,
+  //         (uint32_t)ar.currentline);
+  // DartExposedScriptingContext* context =
+  //     static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
+  // auto memory = context->consoleMemory();
 
-    // Optionally, you can push a new value onto the stack to be returned by
-    // lua_pcall For example, push a specific error code or a more detailed
-    // message
-    const char* error = lua_tostring(L, -1);
-    lua_pushstring(L, error);
-    return 1; // Number of return values
-    // return 0;
+  // Optionally, you can push a new value onto the stack to be returned by
+  // lua_pcall For example, push a specific error code or a more detailed
+  // message
+  const char* error = lua_tostring(L, -1);
+  lua_pushstring(L, error);
+  return 1; // Number of return values
+            // return 0;
 }
 
 EXPORT int riveLuaPCall(lua_State* state, int nargs, int nresults)
 {
-    auto* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(state));
+  auto* context = static_cast<DartExposedScriptingContext*>(
+      lua_getthreaddata(state));
 
 #ifdef __EMSCRIPTEN__
-    int vmGL = context->glHandle();
-    int prevGL = emscripten_webgl_get_current_context();
-    if (vmGL && vmGL != prevGL)
-    {
-        emscripten_webgl_make_context_current(vmGL);
-    }
+  int vmGL = context->glHandle();
+  int prevGL = emscripten_webgl_get_current_context();
+  if (vmGL && vmGL != prevGL)
+  {
+    emscripten_webgl_make_context_current(vmGL);
+  }
 
-    // Auto-open a mini-frame if a Lua callback fires outside the normal render
-    // boundary (e.g. a Coop stream event between endFrame and next beginFrame).
-    // Without an open frame, ore resources are freed and GL IDs recycled by
-    // the wrong context, causing "object does not belong to this context".
-    bool autoFrameOpened = false;
-    if (vmGL && !context->oreFrameOpen())
-    {
-        context->setOreFrameOpen(true);
-        riveGPUBeginFrame(state);
-        autoFrameOpened = true;
-    }
+  // Auto-open a mini-frame if a Lua callback fires outside the normal render
+  // boundary (e.g. a Coop stream event between endFrame and next beginFrame).
+  // Without an open frame, ore resources are freed and GL IDs recycled by
+  // the wrong context, causing "object does not belong to this context".
+  bool autoFrameOpened = false;
+  if (vmGL && !context->oreFrameOpen())
+  {
+    context->setOreFrameOpen(true);
+    riveGPUBeginFrame(state);
+    autoFrameOpened = true;
+  }
 
-    int result = context->pCall(state, nargs, nresults);
+  int result = context->pCall(state, nargs, nresults);
 
-    if (autoFrameOpened)
-    {
-        riveGPUEndFrame(state);
-        context->setOreFrameOpen(false);
-        if (context->renderContext())
-            riveInvalidateGLState((uintptr_t)context->renderContext());
-    }
-    // Restoring 0 binds nothing, which crashes the next unguarded GL call.
-    if (vmGL && prevGL && vmGL != prevGL)
-        emscripten_webgl_make_context_current(prevGL);
-    return result;
+  if (autoFrameOpened)
+  {
+    riveGPUEndFrame(state);
+    context->setOreFrameOpen(false);
+    if (context->renderContext())
+      riveInvalidateGLState((uintptr_t)context->renderContext());
+  }
+  // Restoring 0 binds nothing, which crashes the next unguarded GL call.
+  if (vmGL && prevGL && vmGL != prevGL)
+    emscripten_webgl_make_context_current(prevGL);
+  return result;
 #else
-    return context->pCall(state, nargs, nresults);
+  return context->pCall(state, nargs, nresults);
 #endif
 }
 
-EXPORT void riveLuaPushArtboard(lua_State* state,
-                                WrappedArtboard* wrappedArtboard,
-                                DataContext* dataContext)
+EXPORT void riveLuaPushArtboard(
+    lua_State* state,
+    WrappedArtboard* wrappedArtboard,
+    DataContext* dataContext)
 {
-    if (state == nullptr || wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    // Carry the wrapped artboard's bound view model to the new instance,
-    // otherwise a host-bound default instance is silently replaced by a
-    // blank auto-created one.
-    rcp<ViewModelInstance> viewModelInstance;
-    if (auto boundContext = wrappedArtboard->artboard()->dataContext())
-    {
-        viewModelInstance = boundContext->mainViewModelInstance();
-    }
-    // The pin keeps the host's file alive while the script holds the
-    // artboard; the host may swap its own reference out underneath us.
-    lua_newrive<ScriptedArtboard>(state,
-                                  state,
-                                  wrappedArtboard->file().get(),
-                                  wrappedArtboard->artboard()->instance(),
-                                  std::move(viewModelInstance),
-                                  ref_rcp(dataContext)
+  if (state == nullptr || wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  // Carry the wrapped artboard's bound view model to the new instance,
+  // otherwise a host-bound default instance is silently replaced by a
+  // blank auto-created one.
+  rcp<ViewModelInstance> viewModelInstance;
+  if (auto boundContext = wrappedArtboard->artboard()->dataContext())
+  {
+    viewModelInstance = boundContext->mainViewModelInstance();
+  }
+  // The pin keeps the host's file alive while the script holds the
+  // artboard; the host may swap its own reference out underneath us.
+  lua_newrive<ScriptedArtboard>(
+      state,
+      state,
+      wrappedArtboard->file().get(),
+      wrappedArtboard->artboard()->instance(),
+      std::move(viewModelInstance),
+      ref_rcp(dataContext)
 #ifdef WITH_RIVE_TOOLS
-                                      ,
-                                  wrappedArtboard->file()
+          ,
+      wrappedArtboard->file()
 #endif
-    );
+  );
 }
 
 // Draws a mounted artboard's content into the ScriptedRenderer sitting at Lua
@@ -774,189 +781,237 @@ EXPORT void riveLuaPushArtboard(lua_State* state,
 // into whatever renderer it passes — the main renderer OR an offscreen canvas
 // renderer — matching the runtime's TransitionChild::draw. drawInternal ignores
 // isHidden(), so a child excluded from the normal loop still renders here.
-EXPORT void riveLuaDrawArtboardToStackRenderer(lua_State* state,
-                                               int index,
-                                               WrappedArtboard* wrappedArtboard,
-                                               float xx,
-                                               float xy,
-                                               float yx,
-                                               float yy,
-                                               float tx,
-                                               float ty)
+EXPORT void riveLuaDrawArtboardToStackRenderer(
+    lua_State* state,
+    int index,
+    WrappedArtboard* wrappedArtboard,
+    float xx,
+    float xy,
+    float yx,
+    float yy,
+    float tx,
+    float ty)
 {
-    if (state == nullptr || wrappedArtboard == nullptr)
-    {
-        return;
-    }
-    auto scriptedRenderer = lua_torive<ScriptedRenderer>(state, index);
-    if (scriptedRenderer == nullptr)
-    {
-        return;
-    }
-    Renderer* renderer = scriptedRenderer->validate(state);
-    if (renderer == nullptr)
-    {
-        return;
-    }
-    renderer->save();
-    renderer->transform(Mat2D(xx, xy, yx, yy, tx, ty));
-    wrappedArtboard->artboard()->drawInternal(renderer);
-    renderer->restore();
+  if (state == nullptr || wrappedArtboard == nullptr)
+  {
+    return;
+  }
+  auto scriptedRenderer = lua_torive<ScriptedRenderer>(state, index);
+  if (scriptedRenderer == nullptr)
+  {
+    return;
+  }
+  Renderer* renderer = scriptedRenderer->validate(state);
+  if (renderer == nullptr)
+  {
+    return;
+  }
+  renderer->save();
+  renderer->transform(Mat2D(xx, xy, yx, yy, tx, ty));
+  wrappedArtboard->artboard()->drawInternal(renderer);
+  renderer->restore();
 }
 
-EXPORT void riveLuaPushPath(lua_State* state,
-                            Factory* factory,
-                            RenderPath* renderPath)
+EXPORT void riveLuaPushPath(
+    lua_State* state,
+    Factory* factory,
+    RenderPath* renderPath)
 {
-    if (state == nullptr || renderPath == nullptr)
-    {
-        return;
-    }
-    const rive::RawPath& rawPath = renderPathToRawPath(factory, renderPath);
-    lua_newrive<ScriptedPathData>(state, &rawPath);
+  if (state == nullptr || renderPath == nullptr)
+  {
+    return;
+  }
+  const rive::RawPath& rawPath = renderPathToRawPath(factory, renderPath);
+  lua_newrive<ScriptedPathData>(state, &rawPath);
 }
 
-EXPORT ScriptedRenderer* riveLuaPushRenderer(lua_State* state,
-                                             Renderer* renderer)
+EXPORT ScriptedRenderer* riveLuaPushRenderer(
+    lua_State* state,
+    Renderer* renderer)
 {
-    if (state == nullptr || renderer == nullptr)
-    {
-        return nullptr;
-    }
-    return lua_newrive<ScriptedRenderer>(state, renderer);
+  if (state == nullptr || renderer == nullptr)
+  {
+    return nullptr;
+  }
+  return lua_newrive<ScriptedRenderer>(state, renderer);
 }
 
-EXPORT ScriptedMat2D* riveLuaPushFullMatrix(lua_State* state,
-                                            float x1,
-                                            float x2,
-                                            float y1,
-                                            float y2,
-                                            float tx,
-                                            float ty)
+EXPORT ScriptedMat2D* riveLuaPushFullMatrix(
+    lua_State* state,
+    float x1,
+    float x2,
+    float y1,
+    float y2,
+    float tx,
+    float ty)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    return lua_newrive<ScriptedMat2D>(state, x1, x2, y1, y2, tx, ty);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  return lua_newrive<ScriptedMat2D>(state, x1, x2, y1, y2, tx, ty);
 }
 
 EXPORT ScriptedMat2D* riveLuaPushMatrix(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    return lua_newrive<ScriptedMat2D>(state);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  return lua_newrive<ScriptedMat2D>(state);
 }
 
-EXPORT void riveLuaPushMatrixX(ScriptedMat2D* scriptedMat,
-                               float x1,
-                               float x2,
-                               float tx)
+EXPORT void riveLuaPushMatrixX(
+    ScriptedMat2D* scriptedMat,
+    float x1,
+    float x2,
+    float tx)
 {
-    if (scriptedMat == nullptr)
-    {
-        return;
-    }
-    scriptedMat->value.xx(x1);
-    scriptedMat->value.xy(x2);
-    scriptedMat->value.tx(tx);
+  if (scriptedMat == nullptr)
+  {
+    return;
+  }
+  scriptedMat->value.xx(x1);
+  scriptedMat->value.xy(x2);
+  scriptedMat->value.tx(tx);
 }
 
-EXPORT void riveLuaPushMatrixY(ScriptedMat2D* scriptedMat,
-                               float y1,
-                               float y2,
-                               float ty)
+EXPORT void riveLuaPushMatrixY(
+    ScriptedMat2D* scriptedMat,
+    float y1,
+    float y2,
+    float ty)
 {
-    if (scriptedMat == nullptr)
-    {
-        return;
-    }
-    scriptedMat->value.yx(y1);
-    scriptedMat->value.yy(y2);
-    scriptedMat->value.ty(ty);
+  if (scriptedMat == nullptr)
+  {
+    return;
+  }
+  scriptedMat->value.yx(y1);
+  scriptedMat->value.yy(y2);
+  scriptedMat->value.ty(ty);
 }
 
 EXPORT ScriptedDataValue* riveLuaDataValue(lua_State* state, int index)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto scriptedDataValue = (ScriptedDataValue*)lua_touserdata(state, index);
-    return scriptedDataValue;
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto scriptedDataValue = (ScriptedDataValue*)lua_touserdata(state, index);
+  return scriptedDataValue;
 }
 
+// The value is typically a path effect's update() result, which is
+// script-authored and can be anything. Only Path and PathData carry geometry;
+// everything else is nullptr rather than a reinterpreted userdata.
 EXPORT ScriptedPathData* riveLuaPath(lua_State* state, int index)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto scriptedPath = (ScriptedPathData*)lua_touserdata(state, index);
-    return scriptedPath;
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  return lua_topathdata(state, index);
 }
 
 EXPORT RenderPath* riveLuaRenderPath(lua_State* state, ScriptedPathData* path)
 {
-    auto renderPath = path->renderPath(state);
-    retainScriptedPathQueries(renderPath, path->rawPath);
-    renderPath->ref();
-    return renderPath;
+  if (state == nullptr || path == nullptr)
+  {
+    return nullptr;
+  }
+  auto renderPath = path->renderPath(state);
+  retainScriptedPathQueries(renderPath, path->rawPath);
+  renderPath->ref();
+  return renderPath;
 }
 
-EXPORT ScriptedDataValueNumber* riveLuaPushDataValueNumber(lua_State* state,
-                                                           float value)
+EXPORT ScriptedDataValueNumber* riveLuaPushDataValueNumber(
+    lua_State* state,
+    float value)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
 
-    return lua_newrive<ScriptedDataValueNumber>(state, state, value);
+  return lua_newrive<ScriptedDataValueNumber>(state, state, value);
 }
 
-EXPORT ScriptedDataValueString* riveLuaPushDataValueString(lua_State* state,
-                                                           const char* value)
+EXPORT ScriptedDataValueString* riveLuaPushDataValueString(
+    lua_State* state,
+    const char* value)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
 
-    return lua_newrive<ScriptedDataValueString>(state, state, value);
+  return lua_newrive<ScriptedDataValueString>(state, state, value);
 }
 
-EXPORT ScriptedDataValueBoolean* riveLuaPushDataValueBoolean(lua_State* state,
-                                                             bool value)
+EXPORT ScriptedDataValueBoolean* riveLuaPushDataValueBoolean(
+    lua_State* state,
+    bool value)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
 
-    return lua_newrive<ScriptedDataValueBoolean>(state, state, value);
+  return lua_newrive<ScriptedDataValueBoolean>(state, state, value);
 }
 
-EXPORT ScriptedDataValueColor* riveLuaPushDataValueColor(lua_State* state,
-                                                         int value)
+EXPORT ScriptedDataValueColor* riveLuaPushDataValueColor(
+    lua_State* state,
+    int value)
 
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
 
-    return lua_newrive<ScriptedDataValueColor>(state, state, value);
+  return lua_newrive<ScriptedDataValueColor>(state, state, value);
 }
 
-EXPORT ScriptedPointerEvent* riveLuaPushPointerEvent(lua_State* state,
-                                                     uint8_t id,
-                                                     float x,
-                                                     float y)
+EXPORT ScriptedPointerEvent* riveLuaPushPointerEvent(
+    lua_State* state,
+    uint8_t id,
+    float x,
+    float y,
+    int hitType,
+    float timeStamp)
 {
-    return lua_newrive<ScriptedPointerEvent>(state, id, Vec2D(x, y));
+  return lua_newrive<ScriptedPointerEvent>(
+      state,
+      id,
+      Vec2D(x, y),
+      Vec2D(),
+      hitType,
+      timeStamp);
+}
+
+EXPORT ScriptedScrollEvent* riveLuaPushScrollEvent(
+    lua_State* state,
+    int id,
+    float x,
+    float y,
+    float dx,
+    float dy,
+    int phase,
+    bool precise,
+    float timeStamp)
+{
+  ScrollEvent event;
+  event.delta = Vec2D(dx, dy);
+  event.phase = (ScrollPhase)phase;
+  event.precise = precise;
+  return lua_newrive<ScriptedScrollEvent>(
+      state,
+      id,
+      Vec2D(x, y),
+      event,
+      timeStamp);
 }
 
 EXPORT ScriptedInvocation* riveLuaPushPointerListenerInvocation(
@@ -969,12 +1024,13 @@ EXPORT ScriptedInvocation* riveLuaPushPointerListenerInvocation(
     int hitType,
     float timeStamp)
 {
-    auto p = ListenerInvocation::pointer(Vec2D(x, y),
-                                         Vec2D(prevX, prevY),
-                                         id,
-                                         (ListenerType)(hitType),
-                                         timeStamp);
-    return lua_newrive<ScriptedInvocation>(state, p);
+  auto p = ListenerInvocation::pointer(
+      Vec2D(x, y),
+      Vec2D(prevX, prevY),
+      id,
+      (ListenerType)(hitType),
+      timeStamp);
+  return lua_newrive<ScriptedInvocation>(state, p);
 }
 
 EXPORT ScriptedInvocation* riveLuaPushKeyboardListenerInvocation(
@@ -984,15 +1040,16 @@ EXPORT ScriptedInvocation* riveLuaPushKeyboardListenerInvocation(
     uint8_t isPressed,
     uint8_t isRepeat)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto k = ListenerInvocation::keyboard(static_cast<Key>(key),
-                                          static_cast<KeyModifiers>(modifiers),
-                                          isPressed != 0,
-                                          isRepeat != 0);
-    return lua_newrive<ScriptedInvocation>(state, k);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto k = ListenerInvocation::keyboard(
+      static_cast<Key>(key),
+      static_cast<KeyModifiers>(modifiers),
+      isPressed != 0,
+      isRepeat != 0);
+  return lua_newrive<ScriptedInvocation>(state, k);
 }
 
 /// Scripted node `keyboardEvent` callback (KeyboardInvocation userdata), not
@@ -1004,16 +1061,16 @@ EXPORT ScriptedKeyboardInvocation* riveLuaPushScriptedKeyboardInvocation(
     uint8_t isPressed,
     uint8_t isRepeat)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    return lua_newrive<ScriptedKeyboardInvocation>(
-        state,
-        static_cast<Key>(key),
-        static_cast<KeyModifiers>(modifiers),
-        isPressed != 0,
-        isRepeat != 0);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  return lua_newrive<ScriptedKeyboardInvocation>(
+      state,
+      static_cast<Key>(key),
+      static_cast<KeyModifiers>(modifiers),
+      isPressed != 0,
+      isRepeat != 0);
 }
 
 /// Scripted node `textEvent` callback (TextInputInvocation userdata).
@@ -1021,69 +1078,70 @@ EXPORT ScriptedTextInputInvocation* riveLuaPushScriptedTextInputInvocation(
     lua_State* state,
     const char* utf8Text)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    return lua_newrive<ScriptedTextInputInvocation>(
-        state,
-        std::string(utf8Text ? utf8Text : ""));
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  return lua_newrive<ScriptedTextInputInvocation>(
+      state,
+      std::string(utf8Text ? utf8Text : ""));
 }
 
 EXPORT ScriptedInvocation* riveLuaPushTextInputListenerInvocation(
     lua_State* state,
     const char* utf8Text)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto t = ListenerInvocation::textInput(utf8Text ? utf8Text : "");
-    return lua_newrive<ScriptedInvocation>(state, std::move(t));
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto t = ListenerInvocation::textInput(utf8Text ? utf8Text : "");
+  return lua_newrive<ScriptedInvocation>(state, std::move(t));
 }
 
-EXPORT ScriptedInvocation* riveLuaPushFocusListenerInvocation(lua_State* state,
-                                                              uint8_t isFocus)
+EXPORT ScriptedInvocation* riveLuaPushFocusListenerInvocation(
+    lua_State* state,
+    uint8_t isFocus)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto f = ListenerInvocation::focus(nullptr, isFocus != 0);
-    return lua_newrive<ScriptedInvocation>(state, f);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto f = ListenerInvocation::focus(nullptr, isFocus != 0);
+  return lua_newrive<ScriptedInvocation>(state, f);
 }
 
 EXPORT ScriptedInvocation* riveLuaPushReportedEventListenerInvocation(
     lua_State* state,
     float delaySeconds)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto e = ListenerInvocation::reportedEvent(nullptr, delaySeconds);
-    return lua_newrive<ScriptedInvocation>(state, e);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto e = ListenerInvocation::reportedEvent(nullptr, delaySeconds);
+  return lua_newrive<ScriptedInvocation>(state, e);
 }
 
 EXPORT ScriptedInvocation* riveLuaPushViewModelChangeListenerInvocation(
     lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto v = ListenerInvocation::viewModelChange(nullptr);
-    return lua_newrive<ScriptedInvocation>(state, v);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto v = ListenerInvocation::viewModelChange(nullptr);
+  return lua_newrive<ScriptedInvocation>(state, v);
 }
 
 EXPORT ScriptedInvocation* riveLuaPushNoneListenerInvocation(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    auto n = ListenerInvocation::none();
-    return lua_newrive<ScriptedInvocation>(state, n);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto n = ListenerInvocation::none();
+  return lua_newrive<ScriptedInvocation>(state, n);
 }
 
 /// Push the `ScriptedInvocation` userdata that backs a Luau listener action's
@@ -1105,70 +1163,23 @@ EXPORT ScriptedInvocation* riveLuaPushGamepadListenerInvocation(
     uint8_t changeIndex,
     float changeValue)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-
-    if (kind == 2)
-    {
-        auto d = ListenerInvocation::gamepadDisconnected(deviceId);
-        return lua_newrive<ScriptedInvocation>(state, d);
-    }
-
-    GamepadSnapshot snapshot;
-    snapshot.deviceId = deviceId;
-    snapshot.buttonMask = buttonMask;
-    if (buttonValues != nullptr && buttonCount > 0)
-    {
-        snapshot.buttonValues.assign(buttonValues, buttonValues + buttonCount);
-    }
-    if (axes != nullptr && axisCount > 0)
-    {
-        snapshot.axes.assign(axes, axes + axisCount);
-    }
-    snapshot.mapping = static_cast<GamepadMappingKind>(mapping);
-
-    if (kind == 0)
-    {
-        auto c = ListenerInvocation::gamepadConnected(snapshot);
-        return lua_newrive<ScriptedInvocation>(state, c);
-    }
-
-    // kind == 1 (event) — mirror fillStandardIntent in gamepad_batch.cpp.
-    GamepadEventInvocation ev;
-    ev.fullState = snapshot;
-    ev.change.kind = changeKind == 0 ? GamepadInputChangeKind::button
-                                     : GamepadInputChangeKind::axis;
-    ev.change.index = changeIndex;
-    ev.change.value = changeValue;
-    ev.hasStandardButtonIntent = false;
-    ev.hasStandardAxisIntent = false;
-    if (snapshot.mapping == GamepadMappingKind::standard)
-    {
-        if (ev.change.kind == GamepadInputChangeKind::button)
-        {
-            if (ev.change.index <=
-                static_cast<uint8_t>(StandardGamepadButton::start))
-            {
-                ev.hasStandardButtonIntent = true;
-                ev.standardButton =
-                    static_cast<StandardGamepadButton>(ev.change.index);
-            }
-        }
-        else
-        {
-            if (ev.change.index <=
-                static_cast<uint8_t>(StandardGamepadAxis::rightTrigger))
-            {
-                ev.hasStandardAxisIntent = true;
-                ev.standardAxis =
-                    static_cast<StandardGamepadAxis>(ev.change.index);
-            }
-        }
-    }
-    auto e = ListenerInvocation::gamepadEvent(std::move(ev));
-    return lua_newrive<ScriptedInvocation>(state, e);
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  auto invocation = gamepadListenerInvocation(
+      kind,
+      deviceId,
+      buttonMask,
+      buttonValues,
+      buttonCount,
+      axes,
+      axisCount,
+      mapping,
+      changeKind,
+      changeIndex,
+      changeValue);
+  return lua_newrive<ScriptedInvocation>(state, invocation);
 }
 
 /// Push the Lua userdata expected by a `ScriptedDrawable`'s
@@ -1191,365 +1202,349 @@ EXPORT void* riveLuaPushScriptedGamepadInvocation(
     uint8_t changeIndex,
     float changeValue)
 {
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
 
-    if (kind == 2)
-    {
-        return lua_newrive<ScriptedGamepadDisconnected>(state, deviceId);
-    }
+  if (kind == 2)
+  {
+    return lua_newrive<ScriptedGamepadDisconnected>(state, deviceId);
+  }
 
-    GamepadSnapshot snapshot;
-    snapshot.deviceId = deviceId;
-    snapshot.buttonMask = buttonMask;
-    if (buttonValues != nullptr && buttonCount > 0)
-    {
-        snapshot.buttonValues.assign(buttonValues, buttonValues + buttonCount);
-    }
-    if (axes != nullptr && axisCount > 0)
-    {
-        snapshot.axes.assign(axes, axes + axisCount);
-    }
-    snapshot.mapping = static_cast<GamepadMappingKind>(mapping);
+  GamepadSnapshot snapshot;
+  snapshot.deviceId = deviceId;
+  snapshot.buttonMask = buttonMask;
+  if (buttonValues != nullptr && buttonCount > 0)
+  {
+    snapshot.buttonValues.assign(buttonValues, buttonValues + buttonCount);
+  }
+  if (axes != nullptr && axisCount > 0)
+  {
+    snapshot.axes.assign(axes, axes + axisCount);
+  }
+  snapshot.mapping = static_cast<GamepadMappingKind>(mapping);
 
-    if (kind == 0)
-    {
-        return lua_newrive<ScriptedGamepadConnected>(state, snapshot);
-    }
+  if (kind == 0)
+  {
+    return lua_newrive<ScriptedGamepadConnected>(state, snapshot);
+  }
 
-    // kind == 1 (event)
-    GamepadEventInvocation ev;
-    ev.fullState = snapshot;
-    ev.change.kind = changeKind == 0 ? GamepadInputChangeKind::button
-                                     : GamepadInputChangeKind::axis;
-    ev.change.index = changeIndex;
-    ev.change.value = changeValue;
-    ev.hasStandardButtonIntent = false;
-    ev.hasStandardAxisIntent = false;
-    if (snapshot.mapping == GamepadMappingKind::standard)
+  // kind == 1 (event)
+  GamepadEventInvocation ev;
+  ev.fullState = snapshot;
+  ev.change.kind = changeKind == 0 ? GamepadInputChangeKind::button
+                                   : GamepadInputChangeKind::axis;
+  ev.change.index = changeIndex;
+  ev.change.value = changeValue;
+  ev.hasStandardButtonIntent = false;
+  ev.hasStandardAxisIntent = false;
+  if (snapshot.mapping == GamepadMappingKind::standard)
+  {
+    if (ev.change.kind == GamepadInputChangeKind::button)
     {
-        if (ev.change.kind == GamepadInputChangeKind::button)
-        {
-            if (ev.change.index <=
-                static_cast<uint8_t>(StandardGamepadButton::start))
-            {
-                ev.hasStandardButtonIntent = true;
-                ev.standardButton =
-                    static_cast<StandardGamepadButton>(ev.change.index);
-            }
-        }
-        else
-        {
-            if (ev.change.index <=
-                static_cast<uint8_t>(StandardGamepadAxis::rightTrigger))
-            {
-                ev.hasStandardAxisIntent = true;
-                ev.standardAxis =
-                    static_cast<StandardGamepadAxis>(ev.change.index);
-            }
-        }
+      if (ev.change.index <= static_cast<uint8_t>(StandardGamepadButton::start))
+      {
+        ev.hasStandardButtonIntent = true;
+        ev.standardButton = static_cast<StandardGamepadButton>(ev.change.index);
+      }
     }
-    return lua_newrive<ScriptedGamepadEvent>(state, ev);
+    else
+    {
+      if (ev.change.index <=
+          static_cast<uint8_t>(StandardGamepadAxis::rightTrigger))
+      {
+        ev.hasStandardAxisIntent = true;
+        ev.standardAxis = static_cast<StandardGamepadAxis>(ev.change.index);
+      }
+    }
+  }
+  return lua_newrive<ScriptedGamepadEvent>(state, ev);
+}
+
+EXPORT uint8_t riveLuaScrollEventHitResult(ScriptedScrollEvent* scrollEvent)
+{
+  return scrollEvent == nullptr ? 0 : (uint8_t)scrollEvent->m_hitResult;
 }
 
 EXPORT uint8_t riveLuaPointerEventHitResult(ScriptedPointerEvent* pointerEvent)
 {
-    if (pointerEvent == nullptr)
-    {
-        return 0;
-    }
-    return (uint8_t)pointerEvent->m_hitResult;
+  if (pointerEvent == nullptr)
+  {
+    return 0;
+  }
+  return (uint8_t)pointerEvent->m_hitResult;
 }
 
 EXPORT const char* riveLuaScriptedDataValueType(
     ScriptedDataValue* scriptedDataValue)
 {
-    if (scriptedDataValue == nullptr)
-    {
-        return toCString("");
-    }
-    if (scriptedDataValue->isNumber())
-    {
-        return toCString("DataValueNumber");
-    }
-    if (scriptedDataValue->isString())
-    {
-        return toCString("DataValueString");
-    }
-    if (scriptedDataValue->isBoolean())
-    {
-        return toCString("DataValueBoolean");
-    }
-    if (scriptedDataValue->isColor())
-    {
-        return toCString("DataValueColor");
-    }
+  if (scriptedDataValue == nullptr)
+  {
     return toCString("");
+  }
+  if (scriptedDataValue->isNumber())
+  {
+    return toCString("DataValueNumber");
+  }
+  if (scriptedDataValue->isString())
+  {
+    return toCString("DataValueString");
+  }
+  if (scriptedDataValue->isBoolean())
+  {
+    return toCString("DataValueBoolean");
+  }
+  if (scriptedDataValue->isColor())
+  {
+    return toCString("DataValueColor");
+  }
+  return toCString("");
 }
 
 EXPORT const float riveLuaScriptedDataValueNumberValue(
     ScriptedDataValue* scriptedDataValue)
 {
-    if (scriptedDataValue != nullptr &&
-        scriptedDataValue->dataValue() != nullptr &&
-        scriptedDataValue->dataValue()->is<DataValueNumber>())
-    {
-        return scriptedDataValue->dataValue()->as<DataValueNumber>()->value();
-    }
-    return 0;
+  if (scriptedDataValue != nullptr &&
+      scriptedDataValue->dataValue() != nullptr &&
+      scriptedDataValue->dataValue()->is<DataValueNumber>())
+  {
+    return scriptedDataValue->dataValue()->as<DataValueNumber>()->value();
+  }
+  return 0;
 }
 
 EXPORT const char* riveLuaScriptedDataValueStringValue(
     ScriptedDataValue* scriptedDataValue)
 {
-    if (scriptedDataValue != nullptr &&
-        scriptedDataValue->dataValue() != nullptr &&
-        scriptedDataValue->dataValue()->is<DataValueString>())
-    {
-        return toCString(
-            scriptedDataValue->dataValue()->as<DataValueString>()->value());
-    }
-    return toCString("");
+  if (scriptedDataValue != nullptr &&
+      scriptedDataValue->dataValue() != nullptr &&
+      scriptedDataValue->dataValue()->is<DataValueString>())
+  {
+    return toCString(
+        scriptedDataValue->dataValue()->as<DataValueString>()->value());
+  }
+  return toCString("");
 }
 
 EXPORT bool riveLuaScriptedDataValueBooleanValue(
     ScriptedDataValue* scriptedDataValue)
 {
-    if (scriptedDataValue != nullptr &&
-        scriptedDataValue->dataValue() != nullptr &&
-        scriptedDataValue->dataValue()->is<DataValueBoolean>())
-    {
-        return scriptedDataValue->dataValue()->as<DataValueBoolean>()->value();
-    }
-    return false;
+  if (scriptedDataValue != nullptr &&
+      scriptedDataValue->dataValue() != nullptr &&
+      scriptedDataValue->dataValue()->is<DataValueBoolean>())
+  {
+    return scriptedDataValue->dataValue()->as<DataValueBoolean>()->value();
+  }
+  return false;
 }
 
 EXPORT int riveLuaScriptedDataValueColorValue(
     ScriptedDataValue* scriptedDataValue)
 {
-    if (scriptedDataValue != nullptr &&
-        scriptedDataValue->dataValue() != nullptr &&
-        scriptedDataValue->dataValue()->is<DataValueColor>())
-    {
-        return scriptedDataValue->dataValue()->as<DataValueColor>()->value();
-    }
-    return false;
+  if (scriptedDataValue != nullptr &&
+      scriptedDataValue->dataValue() != nullptr &&
+      scriptedDataValue->dataValue()->is<DataValueColor>())
+  {
+    return scriptedDataValue->dataValue()->as<DataValueColor>()->value();
+  }
+  return false;
 }
 
 EXPORT void riveLuaPushViewModelInstanceValue(
     lua_State* state,
     ViewModelInstanceValue* viewModelInstanceValue)
 {
-    if (state == nullptr || viewModelInstanceValue == nullptr)
+  if (state == nullptr || viewModelInstanceValue == nullptr)
+  {
+    return;
+  }
+  switch (viewModelInstanceValue->coreType())
+  {
+    case ViewModelInstanceViewModelBase::typeKey:
     {
+      auto vm = viewModelInstanceValue->as<ViewModelInstanceViewModel>();
+      auto vmi = vm->referenceViewModelInstance();
+      if (vmi == nullptr)
+      {
+        fprintf(
+            stderr,
+            "riveLuaPushViewModelInstanceValue - passed in a "
+            "ViewModelInstanceViewModel with no associated "
+            "ViewModelInstance.\n");
         return;
-    }
-    switch (viewModelInstanceValue->coreType())
-    {
-        case ViewModelInstanceViewModelBase::typeKey:
-        {
-            auto vm = viewModelInstanceValue->as<ViewModelInstanceViewModel>();
-            auto vmi = vm->referenceViewModelInstance();
-            if (vmi == nullptr)
-            {
-                fprintf(stderr,
-                        "riveLuaPushViewModelInstanceValue - passed in a "
-                        "ViewModelInstanceViewModel with no associated "
-                        "ViewModelInstance.\n");
-                return;
-            }
+      }
 
-            lua_newrive<ScriptedViewModel>(state,
-                                           state,
-                                           ref_rcp(vmi->viewModel()),
-                                           vmi);
-            break;
-        }
-        default:
-            fprintf(stderr,
-                    "riveLuaPushViewModelInstanceValue - passed in an "
-                    "unhandled ViewModelInstanceValue type: %i\n",
-                    viewModelInstanceValue->coreType());
-            break;
+      lua_newrive<ScriptedViewModel>(
+          state,
+          state,
+          ref_rcp(vmi->viewModel()),
+          vmi);
+      break;
     }
-    // lua_newrive<ScriptedRenderer>(state, renderer);
+    default:
+      fprintf(
+          stderr,
+          "riveLuaPushViewModelInstanceValue - passed in an "
+          "unhandled ViewModelInstanceValue type: %i\n",
+          viewModelInstanceValue->coreType());
+      break;
+  }
+  // lua_newrive<ScriptedRenderer>(state, renderer);
 }
 
 EXPORT void riveLuaScriptedRendererEnd(ScriptedRenderer* renderer)
 {
-    if (renderer == nullptr)
-    {
-        return;
-    }
-    renderer->end();
+  if (renderer == nullptr)
+  {
+    return;
+  }
+  renderer->end();
 }
 
 EXPORT void riveStackDump(lua_State* state)
 {
-    int i;
-    int top = lua_gettop(state);
-    for (i = 1; i <= top; i++)
-    { /* repeat for each level */
-        int t = lua_type(state, i);
-        switch (t)
-        {
+  int i;
+  int top = lua_gettop(state);
+  for (i = 1; i <= top; i++)
+  { /* repeat for each level */
+    int t = lua_type(state, i);
+    switch (t)
+    {
 
-            case LUA_TSTRING: /* strings */
-                fprintf(stderr,
-                        "  (%i)[STRING] %s\n",
-                        i,
-                        lua_tostring(state, i));
-                break;
+      case LUA_TSTRING: /* strings */
+        fprintf(stderr, "  (%i)[STRING] %s\n", i, lua_tostring(state, i));
+        break;
 
-            case LUA_TBOOLEAN: /* booleans */
-                fprintf(stderr,
-                        "  (%i)[BOOLEAN] %s\n",
-                        i,
-                        lua_toboolean(state, i) ? "true" : "false");
-                break;
+      case LUA_TBOOLEAN: /* booleans */
+        fprintf(
+            stderr,
+            "  (%i)[BOOLEAN] %s\n",
+            i,
+            lua_toboolean(state, i) ? "true" : "false");
+        break;
 
-            case LUA_TNUMBER: /* numbers */
-                fprintf(stderr,
-                        "  (%i)[NUMBER] %g\n",
-                        i,
-                        lua_tonumber(state, i));
-                break;
+      case LUA_TNUMBER: /* numbers */
+        fprintf(stderr, "  (%i)[NUMBER] %g\n", i, lua_tonumber(state, i));
+        break;
 
-            default: /* other values */
-                fprintf(stderr, "  (%i)[%s]\n", i, lua_typename(state, t));
-                break;
-        }
+      default: /* other values */
+        fprintf(stderr, "  (%i)[%s]\n", i, lua_typename(state, t));
+        break;
     }
-    fprintf(stderr, "\n"); /* end the listing */
+  }
+  fprintf(stderr, "\n"); /* end the listing */
 }
 
 EXPORT void clearScriptingVM(File* file)
 {
-    if (file == nullptr)
-    {
-        return;
-    }
-    file->clearScriptingVM();
+  if (file == nullptr)
+  {
+    return;
+  }
+  file->clearScriptingVM();
 }
 
 EXPORT int riveLuaPushDataContext(lua_State* state, DataContext* dataContext)
 {
-    if (state == nullptr || dataContext == nullptr)
-    {
-        return 0;
-    }
-    lua_newrive<ScriptedDataContext>(state, state, ref_rcp(dataContext));
-    return 1;
+  if (state == nullptr || dataContext == nullptr)
+  {
+    return 0;
+  }
+  lua_newrive<ScriptedDataContext>(state, state, ref_rcp(dataContext));
+  return 1;
 }
 
-EXPORT int riveLuaPushDataContextViewModel(lua_State* state,
-                                           DataContext* dataContext)
+EXPORT int riveLuaPushDataContextViewModel(
+    lua_State* state,
+    DataContext* dataContext)
 {
-    if (state == nullptr || dataContext == nullptr)
-    {
-        return 0;
-    }
-    auto viewModelInstance = dataContext->mainViewModelInstance();
-    if (viewModelInstance == nullptr)
-    {
-        return 0;
-    }
-    lua_newrive<ScriptedViewModel>(state,
-                                   state,
-                                   ref_rcp(viewModelInstance->viewModel()),
-                                   viewModelInstance);
-    return 1;
+  if (state == nullptr || dataContext == nullptr)
+  {
+    return 0;
+  }
+  auto viewModelInstance = dataContext->mainViewModelInstance();
+  if (viewModelInstance == nullptr)
+  {
+    return 0;
+  }
+  lua_newrive<ScriptedViewModel>(
+      state,
+      state,
+      ref_rcp(viewModelInstance->viewModel()),
+      viewModelInstance);
+  return 1;
 }
 
 // Push a specific ViewModelInstance onto the Lua stack as a ScriptedViewModel
 // userdata (the same wrapper type `context:viewModel()` returns).
-EXPORT int riveLuaPushViewModelInstance(lua_State* state,
-                                        ViewModelInstance* viewModelInstance)
+EXPORT int riveLuaPushViewModelInstance(
+    lua_State* state,
+    ViewModelInstance* viewModelInstance)
 {
-    if (state == nullptr || viewModelInstance == nullptr)
-    {
-        return 0;
-    }
-    lua_newrive<ScriptedViewModel>(state,
-                                   state,
-                                   ref_rcp(viewModelInstance->viewModel()),
-                                   ref_rcp(viewModelInstance));
-    return 1;
+  if (state == nullptr || viewModelInstance == nullptr)
+  {
+    return 0;
+  }
+  lua_newrive<ScriptedViewModel>(
+      state,
+      state,
+      ref_rcp(viewModelInstance->viewModel()),
+      ref_rcp(viewModelInstance));
+  return 1;
 }
 
 // Push an array table of the names of every global view model.
 EXPORT int riveLuaPushGlobalViewModelNames(lua_State* state, File* file)
 {
-    if (state == nullptr || file == nullptr)
-    {
-        return 0;
-    }
-    auto names = file->globalViewModelNames();
-    lua_createtable(state, (int)names.size(), 0);
-    int index = 1;
-    for (const auto& name : names)
-    {
-        lua_pushstring(state, name.c_str());
-        lua_rawseti(state, -2, index++);
-    }
-    return 1;
+  if (state == nullptr || file == nullptr)
+  {
+    return 0;
+  }
+  auto names = file->globalViewModelNames();
+  lua_createtable(state, (int)names.size(), 0);
+  int index = 1;
+  for (const auto& name : names)
+  {
+    lua_pushstring(state, name.c_str());
+    lua_rawseti(state, -2, index++);
+  }
+  return 1;
 }
 
-EXPORT void riveLuaPushBlob(lua_State* state,
-                            const char* name,
-                            const uint8_t* data,
-                            size_t size)
+EXPORT void riveLuaPushBlob(
+    lua_State* state,
+    const char* name,
+    const uint8_t* data,
+    size_t size)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    lua_push_blob(state, name, data, size);
+  if (state == nullptr)
+  {
+    return;
+  }
+  lua_push_blob(state, name, data, size);
 }
 
 // Poll for completed async tasks (image decodes, etc.) and invoke callbacks.
 // maxCallbacks of 0 defaults to 256 as a safety cap. Returns number processed.
 EXPORT uint32_t riveLuaPollAsyncWork(lua_State* state, uint32_t maxCallbacks)
 {
-    if (state == nullptr)
-    {
-        return 0;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context == nullptr)
-    {
-        return 0;
-    }
-    WorkPool* wp = context->workPool();
-    if (wp == nullptr)
-    {
-        return 0;
-    }
-    return wp->pollCompletedWork(maxCallbacks == 0 ? 256 : maxCallbacks);
+  if (state == nullptr || lua_getthreaddata(state) == nullptr)
+  {
+    return 0;
+  }
+  return rive_pollAsyncWork(maxCallbacks == 0 ? 256 : maxCallbacks);
 }
 
-// Check if there are any pending async tasks.
+// Check if there are any pending async tasks. Keeps the host ticking frames
+// until outstanding decodes and fetches deliver.
 EXPORT bool riveLuaHasPendingAsyncWork(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return false;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context == nullptr)
-    {
-        return false;
-    }
-    WorkPool* wp = context->workPool();
-    if (wp == nullptr)
-    {
-        return false;
-    }
-    return wp->hasPendingWork();
+  if (state == nullptr || lua_getthreaddata(state) == nullptr)
+  {
+    return false;
+  }
+  return rive_hasPendingAsyncWork();
 }
 
 // C++ linkage — defined in lua_image_decode.cpp outside any namespace.
@@ -1559,11 +1554,11 @@ extern int context_decodeImage_impl(lua_State* L);
 // position 2 and returns a Promise. Called from the Dart-side context table.
 EXPORT int riveLuaDecodeImage(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return 0;
-    }
-    return context_decodeImage_impl(state);
+  if (state == nullptr)
+  {
+    return 0;
+  }
+  return context_decodeImage_impl(state);
 }
 
 // Look up a shader by name from the per-VM ScriptingContext (editor path) or
@@ -1572,13 +1567,13 @@ EXPORT int riveLuaDecodeImage(lua_State* state)
 EXPORT int riveLuaPushShader(lua_State* state, const char* name)
 {
 #if defined(RIVE_CANVAS) && defined(RIVE_ORE)
-    if (state == nullptr || name == nullptr)
-    {
-        return 0;
-    }
-    return lua_gpu_push_shader_by_name(state, name);
-#else
+  if (state == nullptr || name == nullptr)
+  {
     return 0;
+  }
+  return lua_gpu_push_shader_by_name(state, name);
+#else
+  return 0;
 #endif
 }
 
@@ -1586,11 +1581,11 @@ EXPORT int riveLuaPushShader(lua_State* state, const char* name)
 // implementation used by context_namecall's features case.
 EXPORT int riveLuaPushGPUFeatures(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return 0;
-    }
-    return lua_push_gpu_features(state);
+  if (state == nullptr)
+  {
+    return 0;
+  }
+  return lua_push_gpu_features(state);
 }
 
 // On WASM we need wrappers around riveGPUBeginFrame / riveGPUEndFrame that add
@@ -1599,39 +1594,39 @@ EXPORT int riveLuaPushGPUFeatures(lua_State* state)
 #ifdef __EMSCRIPTEN__
 EXPORT void riveGPUBeginFrameExport(lua_State* L)
 {
-    auto* ctx = static_cast<ScriptingContext*>(lua_getthreaddata(L));
-    int vmGL = ctx->glHandle();
-    if (vmGL)
-    {
-        int prevGL = emscripten_webgl_get_current_context();
-        ctx->setPrevGLContext(prevGL);
-        if (vmGL != prevGL)
-            emscripten_webgl_make_context_current(vmGL);
-        ctx->setOreFrameOpen(true);
-    }
-    riveGPUBeginFrame(L);
+  auto* ctx = static_cast<ScriptingContext*>(lua_getthreaddata(L));
+  int vmGL = ctx->glHandle();
+  if (vmGL)
+  {
+    int prevGL = emscripten_webgl_get_current_context();
+    ctx->setPrevGLContext(prevGL);
+    if (vmGL != prevGL)
+      emscripten_webgl_make_context_current(vmGL);
+    ctx->setOreFrameOpen(true);
+  }
+  riveGPUBeginFrame(L);
 }
 
 EXPORT void riveGPUEndFrameExport(lua_State* L)
 {
-    auto* ctx = static_cast<ScriptingContext*>(lua_getthreaddata(L));
-    int vmGL = ctx->glHandle();
-    if (vmGL)
-    {
-        int currentGL = emscripten_webgl_get_current_context();
-        if (vmGL != currentGL)
-            emscripten_webgl_make_context_current(vmGL);
-    }
-    riveGPUEndFrame(L);
-    if (vmGL)
-    {
-        ctx->setOreFrameOpen(false);
-        if (ctx->renderContext())
-            riveInvalidateGLState((uintptr_t)ctx->renderContext());
-        int prevGL = (int)ctx->prevGLContext();
-        if (prevGL && prevGL != vmGL)
-            emscripten_webgl_make_context_current(prevGL);
-    }
+  auto* ctx = static_cast<ScriptingContext*>(lua_getthreaddata(L));
+  int vmGL = ctx->glHandle();
+  if (vmGL)
+  {
+    int currentGL = emscripten_webgl_get_current_context();
+    if (vmGL != currentGL)
+      emscripten_webgl_make_context_current(vmGL);
+  }
+  riveGPUEndFrame(L);
+  if (vmGL)
+  {
+    ctx->setOreFrameOpen(false);
+    if (ctx->renderContext())
+      riveInvalidateGLState((uintptr_t)ctx->renderContext());
+    int prevGL = (int)ctx->prevGLContext();
+    if (prevGL && prevGL != vmGL)
+      emscripten_webgl_make_context_current(prevGL);
+  }
 }
 #endif
 
@@ -1646,130 +1641,131 @@ EXPORT int riveLuaPushAudioSource(WasmPtr state, WasmPtr audioSource)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-    lua_State* L = (lua_State*)state;
-    AudioSource* audio = (AudioSource*)audioSource;
+  lua_State* L = (lua_State*)state;
+  AudioSource* audio = (AudioSource*)audioSource;
 #else
-    lua_State* L = state;
-    AudioSource* audio = audioSource;
+  lua_State* L = state;
+  AudioSource* audio = audioSource;
 #endif
-    if (L == nullptr || audio == nullptr)
-    {
-        return 0;
-    }
-    auto scriptedAudioSource = lua_newrive<ScriptedAudioSource>(L);
-    scriptedAudioSource->source(ref_rcp(audio));
-    return 1;
+  if (L == nullptr || audio == nullptr)
+  {
+    return 0;
+  }
+  auto scriptedAudioSource = lua_newrive<ScriptedAudioSource>(L);
+  scriptedAudioSource->source(ref_rcp(audio));
+  return 1;
 }
 #endif
-
-EXPORT void riveLuaAdvanceDetachedViewModels(lua_State* state)
-{
-    if (state == nullptr)
-    {
-        return;
-    }
-    auto* context = static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context)
-    {
-        context->advanceDetachedViewModels();
-    }
-}
 
 EXPORT void riveLuaSetExecutionTimeout(lua_State* state, int timeoutMs)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(state));
-    context->timeoutMs = timeoutMs;
+  if (state == nullptr)
+  {
+    return;
+  }
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(
+          lua_getthreaddata(state));
+  context->timeoutMs = timeoutMs;
 }
 
 EXPORT int riveLuaGetExecutionTimeout(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return 50;
-    }
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(state));
-    return context->timeoutMs;
+  if (state == nullptr)
+  {
+    return 50;
+  }
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(
+          lua_getthreaddata(state));
+  return context->timeoutMs;
+}
+
+EXPORT bool riveLuaBudgetExceeded(lua_State* state)
+{
+  if (state == nullptr)
+  {
+    return false;
+  }
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(
+          lua_getthreaddata(state));
+  return context->budgetExceeded;
 }
 
 // Editor-only: Store generator ref in context for direct ScriptedObject
 // reinitialization without genRuntimeFile.
 EXPORT void riveLuaSetGeneratorRef(lua_State* state, uint32_t assetId, int ref)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context != nullptr)
-    {
-        context->setGeneratorRef(assetId, ref);
-    }
+  if (state == nullptr)
+  {
+    return;
+  }
+  ScriptingContext* context = static_cast<ScriptingContext*>(
+      lua_getthreaddata(state));
+  if (context != nullptr)
+  {
+    context->setGeneratorRef(assetId, ref);
+  }
 }
 
 EXPORT int riveLuaGetGeneratorRef(lua_State* state, uint32_t assetId)
 {
-    if (state == nullptr)
-    {
-        return 0;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context == nullptr)
-    {
-        return 0;
-    }
-    return context->getGeneratorRef(assetId);
+  if (state == nullptr)
+  {
+    return 0;
+  }
+  ScriptingContext* context = static_cast<ScriptingContext*>(
+      lua_getthreaddata(state));
+  if (context == nullptr)
+  {
+    return 0;
+  }
+  return context->getGeneratorRef(assetId);
 }
 
 EXPORT void riveLuaClearGeneratorRefs(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context != nullptr)
-    {
-        context->clearGeneratorRefs();
-    }
+  if (state == nullptr)
+  {
+    return;
+  }
+  ScriptingContext* context = static_cast<ScriptingContext*>(
+      lua_getthreaddata(state));
+  if (context != nullptr)
+  {
+    context->clearGeneratorRefs();
+  }
 }
 
 #ifdef WITH_RIVE_TOOLS
 EXPORT void riveLuaStopPlayback(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context)
-    {
-        context->isPlaying(false);
-        context->disposeOrphanScriptedProperties();
-    }
+  if (state == nullptr)
+  {
+    return;
+  }
+  ScriptingContext* context = static_cast<ScriptingContext*>(
+      lua_getthreaddata(state));
+  if (context)
+  {
+    context->isPlaying(false);
+    context->disposeOrphanScriptedProperties();
+  }
 }
 
 EXPORT void riveLuaStartPlayback(lua_State* state)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    ScriptingContext* context =
-        static_cast<ScriptingContext*>(lua_getthreaddata(state));
-    if (context)
-    {
-        context->isPlaying(true);
-    }
+  if (state == nullptr)
+  {
+    return;
+  }
+  ScriptingContext* context = static_cast<ScriptingContext*>(
+      lua_getthreaddata(state));
+  if (context)
+  {
+    context->isPlaying(true);
+  }
 }
 #endif
 
@@ -1783,14 +1779,14 @@ EXPORT void riveFileSetScriptingVM(WasmPtr filePtr, WasmPtr vmPtr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-    File* file = (File*)filePtr;
-    ScriptingVM* vm = (ScriptingVM*)vmPtr;
+  File* file = (File*)filePtr;
+  ScriptingVM* vm = (ScriptingVM*)vmPtr;
 #endif
-    if (file == nullptr)
-    {
-        return;
-    }
-    file->setScriptingVM(ref_rcp(vm));
+  if (file == nullptr)
+  {
+    return;
+  }
+  file->setScriptingVM(ref_rcp(vm));
 }
 
 // Push a RenderImage onto the Lua stack as a ScriptedImage userdata.
@@ -1802,23 +1798,23 @@ EXPORT int riveLuaPushImage(WasmPtr state, WasmPtr renderImage)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-    lua_State* L = (lua_State*)state;
-    RenderImage* img = (RenderImage*)renderImage;
+  lua_State* L = (lua_State*)state;
+  RenderImage* img = (RenderImage*)renderImage;
 #else
-    lua_State* L = state;
-    RenderImage* img = renderImage;
+  lua_State* L = state;
+  RenderImage* img = renderImage;
 #endif
 
-    if (L == nullptr || img == nullptr)
-    {
-        return 0;
-    }
+  if (L == nullptr || img == nullptr)
+  {
+    return 0;
+  }
 
-    auto scriptedImage = ScriptedImage::luaNew(L);
-    // ref_rcp increments ref count, rcp<> destructor will decrement when
-    // ScriptedImage is GC'd
-    scriptedImage->image = ref_rcp(img);
-    return 1;
+  auto scriptedImage = ScriptedImage::luaNew(L);
+  // ref_rcp increments ref count, rcp<> destructor will decrement when
+  // ScriptedImage is GC'd
+  scriptedImage->image = ref_rcp(img);
+  return 1;
 }
 
 #ifndef __EMSCRIPTEN__
@@ -1828,60 +1824,62 @@ EXPORT int riveLuaPushFont(WasmPtr state, WasmPtr font)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-    lua_State* L = (lua_State*)state;
-    rive::Font* f = (rive::Font*)font;
+  lua_State* L = (lua_State*)state;
+  rive::Font* f = (rive::Font*)font;
 #else
-    lua_State* L = state;
-    rive::Font* f = font;
+  lua_State* L = state;
+  rive::Font* f = font;
 #endif
 
-    if (L == nullptr || f == nullptr)
-    {
-        return 0;
-    }
+  if (L == nullptr || f == nullptr)
+  {
+    return 0;
+  }
 
-    auto scriptedFont = lua_newrive<ScriptedFont>(L);
-    scriptedFont->font = ref_rcp(f);
-    return 1;
+  auto scriptedFont = lua_newrive<ScriptedFont>(L);
+  scriptedFont->font = ref_rcp(f);
+  return 1;
 }
 
 // Push a Luau buffer copied from bytes. Editor-side plumbing for FileFormat
 // parse artifacts crossing between the analysis workspace and this VM.
 #ifndef __EMSCRIPTEN__
-EXPORT void riveLuaPushBuffer(lua_State* state,
-                              const uint8_t* data,
-                              uint64_t size)
+EXPORT void riveLuaPushBuffer(
+    lua_State* state,
+    const uint8_t* data,
+    uint64_t size)
 {
-    if (state == nullptr)
-    {
-        return;
-    }
-    void* buffer = lua_newbuffer(state, (size_t)size);
-    if (data != nullptr && size > 0)
-    {
-        memcpy(buffer, data, (size_t)size);
-    }
+  if (state == nullptr)
+  {
+    return;
+  }
+  void* buffer = lua_newbuffer(state, (size_t)size);
+  if (data != nullptr && size > 0)
+  {
+    memcpy(buffer, data, (size_t)size);
+  }
 }
 
 // Returns the buffer's bytes at a stack index, valid while the value stays
 // on the stack; outSize receives the length. Null when not a buffer.
-EXPORT const uint8_t* riveLuaToBuffer(lua_State* state,
-                                      int index,
-                                      uint64_t* outSize)
+EXPORT const uint8_t* riveLuaToBuffer(
+    lua_State* state,
+    int index,
+    uint64_t* outSize)
 {
-    *outSize = 0;
-    if (state == nullptr)
-    {
-        return nullptr;
-    }
-    size_t length = 0;
-    void* data = lua_tobuffer(state, index, &length);
-    if (data == nullptr)
-    {
-        return nullptr;
-    }
-    *outSize = (uint64_t)length;
-    return (const uint8_t*)data;
+  *outSize = 0;
+  if (state == nullptr)
+  {
+    return nullptr;
+  }
+  size_t length = 0;
+  void* data = lua_tobuffer(state, index, &length);
+  if (data == nullptr)
+  {
+    return nullptr;
+  }
+  *outSize = (uint64_t)length;
+  return (const uint8_t*)data;
 }
 #endif
 
@@ -1889,106 +1887,116 @@ EXPORT const uint8_t* riveLuaToBuffer(lua_State* state,
 
 static int lua_callback(lua_State* L)
 {
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
-    unsigned functionIndex = lua_tounsignedx(L, lua_upvalueindex(1), nullptr);
-    emscripten::val result =
-        context->closures[functionIndex]((WasmPtr)L, functionIndex);
-    return result.as<int>();
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
+  unsigned functionIndex = lua_tounsignedx(L, lua_upvalueindex(1), nullptr);
+  emscripten::val result = context->closures[functionIndex](
+      (WasmPtr)L,
+      functionIndex);
+  return result.as<int>();
 }
 
-EXPORT void riveLuaPushClosure(WasmPtr state,
-                               emscripten::val fn,
-                               WasmPtr debugname)
+EXPORT void riveLuaPushClosure(
+    WasmPtr state,
+    emscripten::val fn,
+    WasmPtr debugname)
 {
-    lua_State* L = (lua_State*)state;
-    const char* name = (const char*)debugname;
+  lua_State* L = (lua_State*)state;
+  const char* name = (const char*)debugname;
 
-    if (L == nullptr)
-    {
-        return;
-    }
+  if (L == nullptr)
+  {
+    return;
+  }
 
-    DartExposedScriptingContext* context =
-        static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
+  DartExposedScriptingContext*
+      context = static_cast<DartExposedScriptingContext*>(lua_getthreaddata(L));
 
-    int upvalue = (int)context->closures.size();
-    context->closures.push_back(fn);
+  int upvalue = (int)context->closures.size();
+  context->closures.push_back(fn);
 
-    lua_pushinteger(L, upvalue);
-    lua_pushcclosurek(L, lua_callback, name, 1, nullptr);
+  lua_pushinteger(L, upvalue);
+  lua_pushcclosurek(L, lua_callback, name, 1, nullptr);
 }
 
 EMSCRIPTEN_BINDINGS(RiveLuauBinding)
 {
-    function("riveLuaPushClosure", &riveLuaPushClosure);
+  function("riveLuaPushClosure", &riveLuaPushClosure);
 
-    value_array<RiveLuauBufferResponse>("RiveLuauBufferResponse")
-        .element(&RiveLuauBufferResponse::data)
-        .element(&RiveLuauBufferResponse::size);
+  value_array<RiveLuauBufferResponse>("RiveLuauBufferResponse")
+      .element(&RiveLuauBufferResponse::data)
+      .element(&RiveLuauBufferResponse::size);
 
-    function("riveLuaConsole",
-             optional_override([](WasmPtr state) -> RiveLuauBufferResponse {
-                 return riveLuaConsole((lua_State*)state);
-             }));
-    function("riveLuaPushImage", &riveLuaPushImage);
-    function("riveLuaPushFont", &riveLuaPushFont);
-    function("riveLuaPushBuffer",
-             optional_override([](WasmPtr state, emscripten::val bytes) {
-                 lua_State* L = (lua_State*)state;
-                 if (L == nullptr)
-                 {
-                     return;
-                 }
-                 std::vector<uint8_t> data =
-                     emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
-                 void* buffer = lua_newbuffer(L, data.size());
-                 if (!data.empty())
-                 {
-                     memcpy(buffer, data.data(), data.size());
-                 }
-             }));
-    function("riveLuaToBuffer",
-             optional_override([](WasmPtr state, int index) -> emscripten::val {
-                 lua_State* L = (lua_State*)state;
-                 if (L == nullptr)
-                 {
-                     return emscripten::val::null();
-                 }
-                 size_t length = 0;
-                 void* data = lua_tobuffer(L, index, &length);
-                 if (data == nullptr)
-                 {
-                     return emscripten::val::null();
-                 }
-                 return emscripten::val(
-                     emscripten::typed_memory_view(length, (uint8_t*)data));
-             }));
+  function(
+      "riveLuaConsole",
+      optional_override([](WasmPtr state) -> RiveLuauBufferResponse {
+        return riveLuaConsole((lua_State*)state);
+      }));
+  function("riveLuaPushImage", &riveLuaPushImage);
+  function("riveLuaPushFont", &riveLuaPushFont);
+  function(
+      "riveLuaPushBuffer",
+      optional_override([](WasmPtr state, emscripten::val bytes) {
+        lua_State* L = (lua_State*)state;
+        if (L == nullptr)
+        {
+          return;
+        }
+        std::vector<uint8_t>
+            data = emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
+        void* buffer = lua_newbuffer(L, data.size());
+        if (!data.empty())
+        {
+          memcpy(buffer, data.data(), data.size());
+        }
+      }));
+  function(
+      "riveLuaToBuffer",
+      optional_override([](WasmPtr state, int index) -> emscripten::val {
+        lua_State* L = (lua_State*)state;
+        if (L == nullptr)
+        {
+          return emscripten::val::null();
+        }
+        size_t length = 0;
+        void* data = lua_tobuffer(L, index, &length);
+        if (data == nullptr)
+        {
+          return emscripten::val::null();
+        }
+        return emscripten::val(
+            emscripten::typed_memory_view(length, (uint8_t*)data));
+      }));
 
-    // VM lifecycle functions - must be in EMSCRIPTEN_BINDINGS because they take
-    // emscripten::val callbacks
-    function("riveVMCreate",
-             optional_override(
-                 [](WasmPtr factory,
-                    emscripten::val consoleHasDataCallback) -> WasmPtr {
-                     return (WasmPtr)riveVMCreate((ExternalPointer)factory,
-                                                  consoleHasDataCallback);
-                 }));
-    function("riveVMDestroy", optional_override([](WasmPtr vmPtr) -> void {
-                 riveVMDestroy((ExternalPointer)vmPtr);
-             }));
-    function("riveVMGetState", optional_override([](WasmPtr vmPtr) -> WasmPtr {
-                 return (WasmPtr)riveVMGetState((ExternalPointer)vmPtr);
-             }));
-    function("riveVMAdopt",
-             optional_override([](WasmPtr vmPtr,
-                                  WasmPtr factory,
-                                  emscripten::val consoleHasDataCallback,
-                                  int glHandle) -> void {
-                 riveVMAdopt((ExternalPointer)vmPtr,
-                             (ExternalPointer)factory,
-                             consoleHasDataCallback,
-                             glHandle);
-             }));
+  // VM lifecycle functions - must be in EMSCRIPTEN_BINDINGS because they take
+  // emscripten::val callbacks
+  function(
+      "riveVMCreate",
+      optional_override(
+          [](WasmPtr factory,
+             emscripten::val consoleHasDataCallback) -> WasmPtr {
+            return (WasmPtr)riveVMCreate(
+                (ExternalPointer)factory,
+                consoleHasDataCallback);
+          }));
+  function("riveVMDestroy", optional_override([](WasmPtr vmPtr) -> void {
+             riveVMDestroy((ExternalPointer)vmPtr);
+           }));
+  function("riveVMGetState", optional_override([](WasmPtr vmPtr) -> WasmPtr {
+             return (WasmPtr)riveVMGetState((ExternalPointer)vmPtr);
+           }));
+  function(
+      "riveVMAdopt",
+      optional_override(
+          [](WasmPtr vmPtr,
+             WasmPtr factory,
+             emscripten::val consoleHasDataCallback,
+             int glHandle) -> void {
+            riveVMAdopt(
+                (ExternalPointer)vmPtr,
+                (ExternalPointer)factory,
+                consoleHasDataCallback,
+                glHandle);
+          }));
 }
 #endif

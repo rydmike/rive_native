@@ -196,4 +196,30 @@ void main() {
 
     expectLayout(item, 30, 40, 40, 20);
   });
+
+  test('virtual contributions size tracks for items with no node', () {
+    final root = LayoutNode.make();
+    final style = LayoutStyle.make();
+    style.display = LayoutDisplay.grid;
+    style.positionType = LayoutPosition.absolute;
+    style.setGridTracks(LayoutGridCollection.templateColumns, const [
+      LayoutGridTrack.auto(),
+      LayoutGridTrack.auto(),
+    ]);
+    root.setStyle(style);
+    // One realized item; the contributions stand for every item.
+    makeChild(root, 0, width: 40, height: 30);
+
+    expect(root.setGridVirtualContributions([30, 50, 20], [40, 70]), isTrue);
+    // The same contributions again change nothing.
+    expect(root.setGridVirtualContributions([30, 50, 20], [40, 70]), isFalse);
+    root.calculateLayout(double.nan, double.nan, LayoutDirection.ltr);
+    expect(root.gridRowLineOffsets, [0, 30, 80, 100]);
+    expect(root.gridColumnLineOffsets, [0, 40, 110]);
+    expectLayout(root, 0, 0, 110, 100);
+
+    expect(root.setGridVirtualContributions(const [], const []), isTrue);
+    root.calculateLayout(double.nan, double.nan, LayoutDirection.ltr);
+    expectLayout(root, 0, 0, 40, 30);
+  });
 }

@@ -270,6 +270,19 @@ final void Function(Pointer<Void> manager, Pointer<Void> node)
         )
         .asFunction();
 
+final void Function(Pointer<Void> manager) _focusManagerPressBegan = nativeLib
+    .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
+      'focusManagerPressBegan',
+    )
+    .asFunction();
+
+final void Function(Pointer<Void> manager, double x, double y)
+    _focusManagerPressEnded = nativeLib
+        .lookup<NativeFunction<Void Function(Pointer<Void>, Float, Float)>>(
+          'focusManagerPressEnded',
+        )
+        .asFunction();
+
 final void Function(Pointer<Void> manager) _focusManagerClearFocus = nativeLib
     .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
       'focusManagerClearFocus',
@@ -723,6 +736,16 @@ final class FocusManagerFFI implements focus.FocusManager, Finalizable {
   }
 
   @override
+  void pressBegan() {
+    _focusManagerPressBegan(_pointer);
+  }
+
+  @override
+  void pressEnded(double x, double y) {
+    _focusManagerPressEnded(_pointer, x, y);
+  }
+
+  @override
   void clearFocus() {
     _focusManagerClearFocus(_pointer);
   }
@@ -970,6 +993,16 @@ final class NativeFocusManagerWrapper implements focus.FocusManager {
   @override
   void setFocus(focus.FocusNode node) {
     _focusManagerSetFocus(_pointer, FocusManagerFFI._getPointer(node)!);
+  }
+
+  @override
+  void pressBegan() {
+    _focusManagerPressBegan(_pointer);
+  }
+
+  @override
+  void pressEnded(double x, double y) {
+    _focusManagerPressEnded(_pointer, x, y);
   }
 
   @override

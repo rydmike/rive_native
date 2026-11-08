@@ -15,8 +15,8 @@ local wamr = dependency.github('bytecodealliance/wasm-micro-runtime', 'WAMR-2.4.
 local simde = dependency.github('simd-everywhere/simde', 'v0.8.2')
 
 -- Struct layouts in wamr's internal headers follow these; any rive TU that
--- includes them (the tier transplant) must compile with the identical set
--- or instance layouts silently diverge.
+-- includes them must compile with the identical set or instance layouts
+-- silently diverge.
 local wamrConfigDefines = {
     'WASM_ENABLE_INTERP=1',
     'WASM_ENABLE_FAST_INTERP=1',
@@ -26,6 +26,8 @@ local wamrConfigDefines = {
     'WASM_ENABLE_LIBC_WASI=1',
     'WASM_ENABLE_MODULE_INST_CONTEXT=1',
     'WASM_ENABLE_BULK_MEMORY=1',
+    -- A host watchdog, not module fuel, bounds how long a call may run.
+    'WASM_ENABLE_RIVE_INTERRUPT=1',
     -- Simde-backed v128 in the fast interpreter; scalar modules
     -- translate the same as before, simd modules stop being refused.
     'WASM_ENABLE_SIMD=1',
@@ -58,11 +60,24 @@ if isNx then
     -- executable memory.
     table.insert(wamrConfigDefines, 'WASM_ENABLE_PRELINKED_AOT=1')
 end
+-- iOS devices map no executable memory either, so rive --ios --aot links
+-- modules into the player the same way.
+if
+    _OPTIONS['os'] == 'ios'
+    and _OPTIONS['variant'] ~= 'emulator'
+    and _OPTIONS['variant'] ~= 'xrsimulator'
+    and _OPTIONS['variant'] ~= 'appletvsimulator'
+then
+    table.insert(wamrConfigDefines, 'WASM_ENABLE_PRELINKED_AOT=1')
+end
 if os.target() == 'windows' and not isNx then
     -- We link wamr statically; under clang's msvc mode wasm_export.h and
     -- wasm_c_api.h otherwise declare every API dllimport.
     table.insert(wamrConfigDefines, 'WASM_RUNTIME_API_EXTERN=')
     table.insert(wamrConfigDefines, 'WASM_API_EXTERN=')
+    -- WAMR keys threaded dispatch on __GNUC__, which clang leaves undefined
+    -- for msvc targets even though it supports computed goto.
+    table.insert(wamrConfigDefines, 'WASM_ENABLE_LABELS_AS_VALUES=1')
 end
 
 -- os.target() stays the host under --for_android; the option is the
@@ -88,6 +103,9 @@ do
     -- tail-merges into a single prediction-killing branch.
     optimize('Speed')
     defines({ 'NDEBUG' })
+    -- Compiled code may call the host with only this guard of stack left,
+    -- and WAMR's 1 to 3 KB default cannot hold a printf.
+    defines({ 'WASM_STACK_GUARD_SIZE=65536' })
     -- Replicated per-handler dispatch is what makes the fast interpreter
     -- fast; default heuristics tail-merge the computed gotos into a single
     -- indirect branch (+27% on box2d). Guarded by bench/check_dispatch_sites.
@@ -97,21 +115,27 @@ do
     -- The tail-dup knobs need llvm 19; older clangs build correct but
     -- slower dispatch, still caught by the dispatch-site guard where it runs.
     -- The probe runs host clang; cross toolchains (the NDK's) may reject
-    -- the knobs the host accepts, so cross builds keep default dispatch.
+    -- the knobs the host accepts, and iOS embeds bitcode, which refuses
+    -- -mllvm, so those builds keep default dispatch.
     local devNull = os.ishost('windows') and 'NUL' or '/dev/null'
     local _, tailDupProbe = os.outputof(
         'clang -fsyntax-only -x c ' .. devNull ..
             ' -mllvm -tail-dup-pred-size=5000' ..
             ' -mllvm -tail-dup-succ-size=5000 2>&1'
     )
-    if tailDupProbe == 0 and _OPTIONS['for_android'] == nil and not isNx then
+    if
+        tailDupProbe == 0
+        and _OPTIONS['for_android'] == nil
+        and _OPTIONS['os'] ~= 'ios'
+        and not isNx
+    then
         buildoptions({
             '-mllvm -tail-dup-pred-size=5000',
             '-mllvm -tail-dup-succ-size=5000',
         })
     end
     defines(wamrConfigDefines)
-    filter({ 'system:macosx' })
+    filter({ 'system:macosx or system:ios' })
     defines({ 'BH_PLATFORM_DARWIN' })
     filter({ 'system:linux' })
     defines({ 'BH_PLATFORM_LINUX' })
@@ -129,10 +153,22 @@ do
     local archOption = _OPTIONS['arch']
     local machine = os.outputof('uname -m')
     local isArm64
+    local isUniversal = false
     -- 'host' is the option's default, not an explicit lane.
     if isNx then
         -- Windows hosted cross build, so neither the host arch nor --arch
         -- describes the target.
+        isArm64 = true
+    elseif archOption == 'universal' then
+        -- One compile for every slice, as the iOS simulator build does.
+        isUniversal = true
+    elseif
+        _OPTIONS['os'] == 'ios'
+        and _OPTIONS['variant'] ~= 'emulator'
+        and _OPTIONS['variant'] ~= 'xrsimulator'
+        and _OPTIONS['variant'] ~= 'appletvsimulator'
+    then
+        -- Every Apple device is arm64.
         isArm64 = true
     elseif archOption ~= nil and archOption ~= '' and archOption ~= 'host' then
         isArm64 = archOption == 'arm64' or archOption == 'aarch64'
@@ -152,6 +188,8 @@ do
             '-DBUILD_TARGET=\\"THUMBV7\\"',
             '-Wno-int-conversion',
         })
+    elseif isUniversal then
+        -- WAMR's config.h names the target per slice when nothing here does.
     elseif isArm64 then
         defines({ 'BUILD_TARGET_AARCH64' })
         buildoptions({ '-DBUILD_TARGET=\\"AARCH64\\"' })
@@ -165,13 +203,26 @@ do
     -- no simd invoke variant; its marshaling never widens. Windows takes
     -- the mingw shim: same Win64 ABI as MSVC targets, and GAS syntax that
     -- clang's integrated assembler handles without ml64.
-    local invokeNative = isArm32 and 'invokeNative_thumb_vfp.s'
-        or isArm64 and 'invokeNative_aarch64_simd.s'
-        or os.target() == 'windows' and 'invokeNative_mingw_x64_simd.s'
-        or 'invokeNative_em64_simd.s'
-    local aotReloc = isArm32 and 'aot_reloc_thumb.c'
-        or isArm64 and 'aot_reloc_aarch64.c'
-        or 'aot_reloc_x86_64.c'
+    local archDir = wamr .. '/core/iwasm/common/arch/'
+    local relocDir = wamr .. '/core/iwasm/aot/arch/'
+    local invokeNative = isUniversal and 'wamr_universal_invoke.S'
+        or archDir
+            .. (
+                isArm32 and 'invokeNative_thumb_vfp.s'
+                or isArm64 and 'invokeNative_aarch64_simd.s'
+                or os.target() == 'windows' and 'invokeNative_mingw_x64_simd.s'
+                or 'invokeNative_em64_simd.s'
+            )
+    local aotReloc = isUniversal and 'wamr_universal_reloc.c'
+        or relocDir
+            .. (
+                isArm32 and 'aot_reloc_thumb.c'
+                or isArm64 and 'aot_reloc_aarch64.c'
+                or 'aot_reloc_x86_64.c'
+            )
+    if isUniversal then
+        includedirs({ archDir, relocDir })
+    end
     includedirs({
         wamr .. '/core/iwasm/include',
         wamr .. '/core/iwasm/common',
@@ -193,12 +244,12 @@ do
     })
     files({
         wamr .. '/core/iwasm/common/*.c',
-        wamr .. '/core/iwasm/common/arch/' .. invokeNative,
+        invokeNative,
         wamr .. '/core/iwasm/interpreter/wasm_loader.c',
         wamr .. '/core/iwasm/interpreter/wasm_runtime.c',
         wamr .. '/core/iwasm/interpreter/wasm_interp_fast.c',
         wamr .. '/core/iwasm/aot/*.c',
-        wamr .. '/core/iwasm/aot/arch/' .. aotReloc,
+        aotReloc,
         wamr .. '/core/iwasm/libraries/libc-builtin/*.c',
         wamr .. '/core/iwasm/libraries/libc-wasi/**.c',
         platformPath .. '/*.c',
@@ -216,6 +267,17 @@ do
     if os.target() == 'windows' and not isNx then
         -- Linux perf-map support; leans on pid_t/getpid.
         removefiles({ wamr .. '/core/iwasm/aot/aot_perf_map.c' })
+        -- msbuild hands the GAS shim to clang-cl as C, so assemble it with
+        -- clang directly.
+        filter({ 'action:vs*', 'files:**.s' })
+        do
+            buildmessage('assembling %{file.name}')
+            buildcommands({
+                'clang --target=x86_64-pc-windows-msvc -c "%{file.abspath}" -o "%{cfg.objdir}/%{file.basename}.obj"',
+            })
+            buildoutputs({ '%{cfg.objdir}/%{file.basename}.obj' })
+        end
+        filter({})
     end
     if isNx then
         files({ platformPath .. '/*.cpp' })

@@ -40,17 +40,21 @@ a time (the overlay assumes it is the only one).
 
 - `ticks` - driver ticks (one per Flutter frame while animating).
 - `paints` - ticks that recorded a frame. `paints < ticks` means pacing gates
-  skipped the difference.
+  skipped the difference, or `DrawOptimization.drawWhenChanged` skipped ticks
+  in which the artboard did not change. Those ticks still advance and are not
+  counted as skips.
 - `skips worker` (`canAcceptDeferredFrame` false) - the replay worker is the
   pacer; the producer holds off so the stateful command stream never drops a
   recorded frame.
 - `skips paused / blocked` - recording paused (iOS backgrounding) or another
   widget already displays this artboard instance.
 - `time painted/ticked` - animation seconds painted vs elapsed. They track
-  each other even when worker/clear-fail skips are high: those skipped ticks
-  bank their elapsed into the next paint. Paused ticks are the exception -
-  paused time is dropped by design (a pause freezes the animation rather than
-  fast-forwarding it on resume), so it widens the gap. Outside pauses, a
+  each other even when worker skips are high: those skipped ticks bank their
+  elapsed into the next paint. Three things widen the gap by design: paused
+  time is dropped (a pause freezes the animation rather than fast-forwarding
+  it on resume), a clear failure skips the draw after its tick already
+  advanced, and `drawWhenChanged` advances unchanged ticks without painting
+  them. Read the gap with `alwaysDraw` and outside pauses, where a
   persistently growing gap would be a bug.
 - `record / replay` - per-frame busy cost of recording (UI thread) and replay
   (render thread), from `deferredThreadStats`.
@@ -74,22 +78,27 @@ its GPU work had signaled.
 
 ## Android GL testing switches
 
-The Android GL backend reads two system properties once, when it creates its
-GL context. Set them over adb and restart the app:
+The Android GL backend reads three system properties once, when it creates
+a texture or its GL context. Set them over adb and restart the app:
 
 ```sh
-adb shell setprop debug.rive.gl_fbo 0    # present directly from the render context
+adb shell setprop debug.rive.gl_ahb 1    # hardware buffer present, whatever the app asked for
+adb shell setprop debug.rive.gl_ahb 0    # Surface present, whatever the app asked for
+adb shell setprop debug.rive.gl_fbo 0    # Surface path: present directly from the render context
 adb shell setprop debug.rive.gl_msaa 1   # MSAA instead of the renderer's choice
-adb shell setprop debug.rive.gl_fbo "''" # unset: back to the default
+adb shell setprop debug.rive.gl_ahb "''" # unset: back to the default
 ```
 
 | Property | Unset (shipping) | Set |
 | --- | --- | --- |
+| `debug.rive.gl_ahb` | Whatever the app chose with `RiveNative.init(androidHardwareBuffers:)`, off unless it opted in. Opted in, on API 29 and up, each texture renders into one of four hardware buffers it owns and hands the finished buffer to Flutter as an Image, so there is no window surface, swap or blit; below API 29, or where the GL context cannot do it (no OpenGL ES 3, no EGL fence sync, no EGLImage extensions), textures take the Surface path below. | `1`: hardware buffers where the device can, regardless of the app's choice. `0`: every texture takes the Surface path. |
 | `debug.rive.gl_fbo` | Offscreen present where the device supports it (`ANDROID_DEVICE_TESTING.md` lists when it does not): each texture renders into rotating offscreen textures (up to three, allocated only as contention demands), and a present thread with its own GL context blits the finished one to the Flutter surface and swaps. | `0`: render into the surface and swap on the render thread. Flutter's platform thread then blocks on Rive's GPU work when it acquires the buffer. |
 | `debug.rive.gl_msaa` | The renderer picks pixel local storage or MSAA per GPU. | `1`: disable pixel local storage, which forces MSAA. |
 
-The log line `Rive GL present: offscreen|direct [(ANGLE)] [(msaa forced)]`
-confirms what the process is running; `(ANGLE)` means the offscreen path was
-skipped because GL is ANGLE. Both switches exist for testing. Shipping
-behavior is the unset one.
+The log lines `Rive hardware buffer present: available|unavailable` and
+`Rive GL present: offscreen|direct [(ANGLE)] [(msaa forced)]` confirm what
+the process is running; the second describes the Surface path, which a
+texture only takes when the first is unavailable or `gl_ahb` is `0`.
+`(ANGLE)` means the offscreen present was skipped because GL is ANGLE. The
+switches exist for testing. Shipping behavior is the unset one.
 

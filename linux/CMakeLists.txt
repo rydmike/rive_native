@@ -96,6 +96,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
   spirv_cross
   rive_pathops
   rml
+  rive_codec
   -Wl,--end-group
 )
 

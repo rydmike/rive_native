@@ -33,6 +33,8 @@ late js.JSFunction _disableFallbackFonts;
 late js.JSFunction _enableFallbackFonts;
 late js.JSFunction _convertStringToNumber;
 late js.JSFunction _convertIntToNumber;
+// Null when the wasm module predates it.
+js.JSFunction? _formatTemplateNumber;
 late js.JSFunction _fontHasColorGlyphs;
 late js.JSFunction _fontIsColorGlyph;
 late js.JSFunction _getColorGlyphLayers;
@@ -64,6 +66,7 @@ class TextEngine {
     _enableFallbackFonts = module['enableFallbackFonts'] as js.JSFunction;
     _convertStringToNumber = module['convertStringToNumber'] as js.JSFunction;
     _convertIntToNumber = module['convertIntToNumber'] as js.JSFunction;
+    _formatTemplateNumber = module['formatTemplateNumber'] as js.JSFunction?;
     _fontHasColorGlyphs = module['fontHasColorGlyphs'] as js.JSFunction;
     _fontIsColorGlyph = module['fontIsColorGlyph'] as js.JSFunction;
     _getColorGlyphLayers = module['getColorGlyphLayers'] as js.JSFunction;
@@ -960,6 +963,23 @@ class TextHelperWeb extends TextHelper {
   double convertIntToNumber(int value) =>
       (_convertIntToNumber.callAsFunction(null, value.toJS) as js.JSNumber)
           .toDartDouble;
+
+  @override
+  String? formatTemplateNumber(double value, String spec) {
+    final format = _formatTemplateNumber;
+    if (format == null) {
+      return null;
+    }
+    return RiveWasm.toNativeString(spec, (specPointer) {
+      final pointer = (format.callAsFunction(null, value.toJS, specPointer)
+              as js.JSNumber)
+          .toDartInt;
+      if (pointer == 0) {
+        return null;
+      }
+      return RiveWasm.toDartString(pointer, deleteNative: true);
+    });
+  }
 }
 
 TextHelper initTextHelper() {

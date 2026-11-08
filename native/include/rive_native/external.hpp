@@ -28,9 +28,9 @@ class Renderer;
 #endif
 #else
 #define PLUGIN_API                                                             \
-    extern "C" __attribute__((visibility("default"))) __attribute__((used))
+  extern "C" __attribute__((visibility("default"))) __attribute__((used))
 #define EXPORT                                                                 \
-    extern "C" __attribute__((visibility("default"))) __attribute__((used))
+  extern "C" __attribute__((visibility("default"))) __attribute__((used))
 #endif
 
 #if defined(__EMSCRIPTEN__)
@@ -51,11 +51,11 @@ using SizeType = uint64_t;
 #if defined(_MSC_VER)
 struct FlutterWindowsTexture
 {
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> nativeTexture;
-    size_t flutterSurfaceDescIdx;
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> nativeTexture;
+  size_t flutterSurfaceDescIdx;
 };
-using FlutterWindowsSwapchain =
-    Swapchain<std::unique_ptr<FlutterWindowsTexture>>;
+using FlutterWindowsSwapchain = Swapchain<
+    std::unique_ptr<FlutterWindowsTexture>>;
 #endif
 
 // Provided to the host.
@@ -94,6 +94,9 @@ PLUGIN_API void* createRiveRendererContext(
 );
 PLUGIN_API void* factoryFromRiveRendererContext(void* context);
 PLUGIN_API void destroyRiveRendererContext(void* context);
+#if defined(_MSC_VER)
+PLUGIN_API void shutdownRiveNative();
+#endif
 PLUGIN_API void setGPU(void* gpu, void* queue);
 
 // Headless rendering for tests (no Flutter plugin required).
@@ -101,9 +104,10 @@ PLUGIN_API void setGPU(void* gpu, void* queue);
 #if defined(__APPLE__) && !defined(__EMSCRIPTEN__)
 EXPORT void* createHeadlessContext(bool disableFramebufferReads);
 EXPORT void* headlessContextFactory(void* headlessContext);
-EXPORT void* createHeadlessRenderer(void* headlessContext,
-                                    uint32_t width,
-                                    uint32_t height);
+EXPORT void* createHeadlessRenderer(
+    void* headlessContext,
+    uint32_t width,
+    uint32_t height);
 EXPORT bool headlessClear(void* renderer, bool doClear, uint32_t color);
 EXPORT bool headlessFlush(void* renderer, float devicePixelRatio);
 EXPORT rive::Renderer* headlessMakeRenderer(void* renderer);

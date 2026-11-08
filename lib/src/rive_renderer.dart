@@ -19,6 +19,10 @@ enum PaintingStyle {
 
 enum PathFillType { nonZero, evenOdd, clockWise }
 
+/// Where a stroke sits relative to its path's edge. Indices match
+/// rive::StrokePosition.
+enum StrokePosition { inside, center, outside }
+
 abstract class RenderGradient {
   final Vec2D start;
   final List<ui.Color> colors;
@@ -37,6 +41,18 @@ class RenderLinearGradient extends RenderGradient {
   RenderLinearGradient(super.start, this.end, super.colors, super.stops);
 }
 
+/// A sweep (conic) gradient: the stops run around [start] rather than along a
+/// line or out to a radius.
+///
+/// It carries an [end] like the linear one even though
+/// `Factory::makeAngularGradient` takes no geometry yet, so that the wire
+/// format is the linear one with a different flag, and so the points are
+/// already there when the factory grows a centre and an angle.
+class RenderAngularGradient extends RenderGradient {
+  final Vec2D end;
+  RenderAngularGradient(super.start, this.end, super.colors, super.stops);
+}
+
 abstract class RenderPaint {
   ui.Color get color;
   set color(ui.Color value);
@@ -53,11 +69,18 @@ abstract class RenderPaint {
   ui.StrokeCap get cap;
   set cap(ui.StrokeCap value);
 
+  /// Renderers that don't support inside/outside strokes draw them centered.
+  StrokePosition get strokePosition;
+  set strokePosition(StrokePosition value);
+
   ui.BlendMode get blendMode;
   set blendMode(ui.BlendMode value);
 
   RenderGradient? get gradient;
   set gradient(RenderGradient? gradient);
+
+  Mat2D get gradientTransform;
+  set gradientTransform(Mat2D value);
 
   void dispose();
 
@@ -80,6 +103,15 @@ abstract class RenderPaint {
   /// support image paints (matches rive::RenderPaint::modulatedImage).
   void modulatedImage(
       RenderImage? image, ImageSampler sampler, Mat2D transform) {}
+
+  /// Like [modulatedImage], with [source]'s artboard as the image: rasterized
+  /// offscreen for [renderer] when it changed. [transform] maps the
+  /// artboard's box, as 0..1, into the space the path is drawn in. Returns
+  /// false, leaving this paint untouched, when the renderer cannot rasterize
+  /// offscreen; the caller then clears any stale image.
+  bool modulatedArtboard(Renderer renderer, ArtboardPaintSource source,
+          ImageSampler sampler, Mat2D transform) =>
+      false;
 }
 
 enum TrimPathMode { none, sequential, synchronized }
@@ -401,6 +433,76 @@ abstract class FlutterRenderer {
   flutter.Canvas get canvas;
 }
 
+/// Layer masking on a Flutter canvas, which has the primitives natively:
+/// `saveLayer` for the offscreen and `dstIn`/`dstOut` for the combine. No
+/// native call and no offscreen plumbing of our own.
+///
+/// This is not the design stage -- that draws through the Rive renderer -- but
+/// it IS artboard thumbnails when GPU readback fails, the icon atlas, the
+/// colour loupe and MCP capture. Without it those would disagree with the
+/// stage.
+///
+/// The saveLayer/restore pairs are issued straight on the canvas, never through
+/// the native save()/restore(), which also push an opacity-stack entry.
+mixin FlutterMaskRenderer on Renderer implements FlutterRenderer {
+  final List<MaskMode> _openMaskModes = [];
+
+  // Rec.601, matching lum_from_rgb in the runtime's shaders, so a luminance
+  // mask reads the same here as it does in playback. Skia's own luma filter is
+  // Rec.709; using it would make thumbnails drift from the stage.
+  static const List<double> _lumaToAlpha = <double>[
+    0, 0, 0, 0, 0, //
+    0, 0, 0, 0, 0, //
+    0, 0, 0, 0, 0, //
+    0.30, 0.59, 0.11, 0, 0,
+  ];
+
+  @override
+  bool beginMask(MaskMode mode, AABB bounds,
+      {double resolution = 1, int handle = 0}) {
+    // resolution and handle are ignored: Flutter picks the layer's own
+    // resolution, and there is no raster of ours to retain between frames.
+    canvas.saveLayer(
+      flutter.Rect.fromLTRB(bounds[0], bounds[1], bounds[2], bounds[3]),
+      flutter.Paint(),
+    );
+    _openMaskModes.add(mode);
+    return true;
+  }
+
+  @override
+  void beginMaskSource() {
+    if (_openMaskModes.isEmpty) {
+      return;
+    }
+    final mode = _openMaskModes.last;
+    final keepsWhereMaskIs =
+        mode == MaskMode.alpha || mode == MaskMode.luminance;
+    final usesLuminance =
+        mode == MaskMode.luminance || mode == MaskMode.invertedLuminance;
+    canvas.saveLayer(
+      null,
+      flutter.Paint()
+        ..blendMode = keepsWhereMaskIs
+            ? flutter.BlendMode.dstIn
+            : flutter.BlendMode.dstOut
+        ..colorFilter = usesLuminance
+            ? const flutter.ColorFilter.matrix(_lumaToAlpha)
+            : null,
+    );
+  }
+
+  @override
+  void endMask() {
+    if (_openMaskModes.isEmpty) {
+      return;
+    }
+    _openMaskModes.removeLast();
+    canvas.restore(); // the mask source layer
+    canvas.restore(); // the content layer
+  }
+}
+
 enum Fit {
   /// Rive content will fill the available view. If the aspect ratios differ,
   /// then the Rive content will be stretched.
@@ -480,6 +582,16 @@ class ImageSampler {
   }
 }
 
+/// How a layer mask's coverage becomes a multiplier on the content it masks.
+/// Mirrors rive::LayerMaskMode and the enumValues order in
+/// dev/defs/layer_mask.json.
+enum MaskMode {
+  alpha,
+  invertedAlpha,
+  luminance,
+  invertedLuminance,
+}
+
 abstract class Renderer {
   Factory get riveFactory;
   void drawPath(RenderPath path, RenderPaint paint);
@@ -531,6 +643,29 @@ abstract class Renderer {
   void transform(Mat2D matrix);
   void modulateOpacity(double opacity);
 
+  /// Opens a layer-mask bracket. Everything drawn until [beginMaskSource] is
+  /// the masked content; everything from there until [endMask] is the mask
+  /// source. [endMask] composites content x coverage into this renderer.
+  ///
+  /// [bounds] is the region to rasterize, in the CURRENT renderer space;
+  /// [resolution] is a quality multiplier on the device pixels it covers,
+  /// matching LayerMask.resolution.
+  ///
+  /// Returns false when this renderer cannot mask, in which case the caller
+  /// draws the content inline and must NOT call the other two. Default
+  /// implementation says no, so a renderer without offscreen support leaves the
+  /// layer unmasked -- visible, but not wrong.
+  bool beginMask(MaskMode mode, AABB bounds,
+          {double resolution = 1, int handle = 0}) =>
+      false;
+
+  /// Ends the content half and begins the mask half. Only legal after a
+  /// [beginMask] that returned true.
+  void beginMaskSource() {}
+
+  /// Ends the mask half and composites the result.
+  void endMask() {}
+
   void scale(double sx, [double? sy]) =>
       transform(Mat2D.fromScale(sx, sy ?? sx));
 
@@ -539,6 +674,12 @@ abstract class Renderer {
 
   /// Makes a Renderer for a Flutter Canvas.
   static Renderer make(flutter.Canvas canvas) => makeFlutterRenderer(canvas);
+
+  /// A key for one mask's retained offscreen canvases, so a mask does not
+  /// re-allocate its textures every frame. Owned by whatever authors the mask
+  /// and handed back with [releaseMaskHandle] when it goes away.
+  static int acquireMaskHandle() => acquireLayerMaskHandle();
+  static void releaseMaskHandle(int handle) => releaseLayerMaskHandle(handle);
 
   static TrimPathEffect makeTrimPath() => makeTrimPathEffect();
   static DashPathEffect makeDashPath() => makeDashPathEffect();
@@ -731,6 +872,22 @@ abstract class RawTextInput {
   /// stays intact for editing.
   bool get obscured;
   set obscured(bool value);
+
+  /// Most code points an insert lets the text grow to, 0 for no limit. Text
+  /// set from outside and undo/redo are kept as they are, even when over it.
+  int get maxCharacters;
+  set maxCharacters(int value);
+
+  /// Most displayed (wrapped) lines an insert lets the text grow to, 0 for no
+  /// limit. Held to edits only, like [maxCharacters].
+  int get maxLines;
+  set maxLines(int value);
+
+  /// Whether the layout hugs the text's width, so the field grows with its
+  /// text up to the width [measure] was last offered: [maxLines] then wraps
+  /// there. Otherwise it wraps at [maxWidth], where the text displays.
+  bool get hugsWidth;
+  set hugsWidth(bool value);
 
   String get text;
   set text(String value);

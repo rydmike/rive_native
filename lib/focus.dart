@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'src/focus/edge_behavior.dart';
 import 'src/ffi/rive_focus_ffi.dart'
     if (dart.library.js_interop) 'src/web/rive_focus_web.dart';
@@ -110,6 +112,21 @@ abstract class FocusManager {
 
   /// Clear the current focus.
   void clearFocus();
+
+  /// A primary press began: snapshot the primary focus for [pressEnded].
+  ///
+  /// Called by a state machine controller around pointer dispatch; the
+  /// native state machine does this itself, so apps never call it.
+  // ignore: invalid_internal_annotation
+  @internal
+  void pressBegan();
+
+  /// The press finished dispatching at root artboard position (x, y). Blurs
+  /// the focus [pressBegan] saw if it is still focused, blurs on an outside
+  /// press, and the press missed it.
+  // ignore: invalid_internal_annotation
+  @internal
+  void pressEnded(double x, double y);
 
   /// Check if the given node or any of its descendants has focus.
   bool hasFocus(FocusNode node);

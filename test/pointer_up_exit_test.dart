@@ -8,19 +8,22 @@ class _RecordingStateMachine implements StateMachine {
   final List<String> calls = <String>[];
 
   @override
-  HitResult pointerDown(Vec2D position, {int pointerId = 0}) {
+  HitResult pointerDown(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary}) {
     calls.add('down');
     return HitResult.hit;
   }
 
   @override
-  HitResult pointerUp(Vec2D position, {int pointerId = 0}) {
+  HitResult pointerUp(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary}) {
     calls.add('up');
     return HitResult.hit;
   }
 
   @override
-  HitResult pointerMove(Vec2D position, {double? timeStamp, int pointerId = 0}) {
+  HitResult pointerMove(Vec2D position,
+      {double? timeStamp, int pointerId = 0}) {
     calls.add('move');
     return HitResult.hit;
   }

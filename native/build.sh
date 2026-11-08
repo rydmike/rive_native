@@ -11,6 +11,8 @@ RUNTIME=
 WASM_SINGLE_THREADED=
 CROSS_COMPILE_OS=
 WITH_MICROPROFILE=
+# luau (default), wasm, or both; selects the scripting backend librive carries.
+SCRIPTING_VM=luau
 
 unameOut="$(uname -s)"
 case "${unameOut}" in
@@ -106,6 +108,9 @@ for var in "$@"; do
     fi
     if [[ $var = "microprofile" ]]; then
         WITH_MICROPROFILE=--with_microprofile
+    fi
+    if [[ $var == --scripting_vm=* ]]; then
+        SCRIPTING_VM=${var#--scripting_vm=}
     fi
 done
 
@@ -219,11 +224,22 @@ for var in "$@"; do
     fi
 done
 
+# Flavors keep separate intermediate trees so switching one never trips the
+# premake argument guard; the artifact layout is shared.
+FLAVOR_OUT=
+# The default flavor passes no flag, so trees configured before flavors existed
+# keep their premake arguments.
+SCRIPTING_VM_FLAG=
+if [[ $SCRIPTING_VM != "luau" ]]; then
+    FLAVOR_OUT=_$SCRIPTING_VM
+    SCRIPTING_VM_FLAG=--scripting_vm=$SCRIPTING_VM
+fi
+
 out_dir() {
     if [[ $2 == "wasm" ]]; then
-        echo "out/$CONFIG/$2$EXTRA_OUT"
+        echo "out/$CONFIG/$2$EXTRA_OUT$FLAVOR_OUT"
     else
-        echo "out/$CONFIG/$1/$2$EXTRA_OUT"
+        echo "out/$CONFIG/$1/$2$EXTRA_OUT$FLAVOR_OUT"
     fi
 }
 
@@ -248,7 +264,14 @@ if [[ $FLUTTER_RUNTIME = "" ]]; then
     RIVE_DECODERS="--with_rive_astc_decoder --with_rive_bc_decoder --with_rive_etc_decoder"
 fi
 
-RIVE_NATIVE_PREMAKE_COMMANDS="$WITH_MICROPROFILE --with_rive_canvas --with_rive_scripting --with_objc_exceptions $RIVE_TOOLS --with_rive_path_query --with_rive_text --with_rive_layout --with_rive_audio=$RIVE_AUDIO $CONFIG --variant=$VARIANT $COMPAT $KIND $FLUTTER_RUNTIME $NO_LTO $ASAN $CROSS_COMPILE_OS"
+# Script networking (fetch) is editor-only for now; the Flutter runtime ships
+# without it.
+RIVE_SCRIPTNET=
+if [[ $FLUTTER_RUNTIME = "" ]]; then
+    RIVE_SCRIPTNET=--with_rive_scriptnet
+fi
+
+RIVE_NATIVE_PREMAKE_COMMANDS="$WITH_MICROPROFILE $SCRIPTING_VM_FLAG --with_rive_canvas --with_rive_scripting --with_objc_exceptions $RIVE_TOOLS --with_rive_path_query --with_rive_text --with_rive_layout --with_rive_audio=$RIVE_AUDIO $RIVE_SCRIPTNET $CONFIG --variant=$VARIANT $COMPAT $KIND $FLUTTER_RUNTIME $NO_LTO $ASAN $CROSS_COMPILE_OS"
 
 make_rive_native_plugin() {
     local BUILD_OS=$1
@@ -266,17 +289,41 @@ make_rive_native_plugin() {
     $RUNTIME_PATH/build_rive.sh $BUILD_ARCH $CONFIG $RIVE_NATIVE_PREMAKE_COMMANDS $DECODERS $@
 }
 
+# Tools builds publish the bake's binaryen, and the wasm and both flavors
+# WAMR, inside librive.a so the podspec, the linux cmake and the artifact layout stay the
+# same across flavors. The merge writes its own archive: ninja updates
+# librive.a in place, so merging into it would keep the last merge's members.
+merge_wamr_into_rive() {
+    local DIR=$1
+    local FULL="$DIR/librive_full.a"
+    cp "$DIR/librive.a" "$FULL"
+    local LIB
+    for LIB in libwamr.a libbinaryen.a; do
+        if [[ ! -f "$DIR/$LIB" ]]; then
+            continue
+        fi
+        if [[ $machine = "macosx" ]]; then
+            libtool -static -o "$DIR/librive_merged.a" "$FULL" "$DIR/$LIB"
+        else
+            printf 'create %s\naddlib %s\naddlib %s\nsave\nend\n' "$DIR/librive_merged.a" "$FULL" "$DIR/$LIB" | ar -M
+        fi
+        mv "$DIR/librive_merged.a" "$FULL"
+    done
+}
+
+# Publishes $1; $2 names the per arch source when it differs.
 rive_native_lipo_macosx() {
     ARCH_X64="$(out_dir macosx x64)"
     ARCH_ARM64="$(out_dir macosx arm64)"
+    local SRC=${2:-$1}
     mkdir -p build/macosx/bin/$CONFIG$EXTRA_OUT
-    lipo -create -arch arm64 $ARCH_ARM64/$1 -arch x86_64 $ARCH_X64/$1 -output build/macosx/bin/$CONFIG$EXTRA_OUT/$1
+    lipo -create -arch arm64 $ARCH_ARM64/$SRC -arch x86_64 $ARCH_X64/$SRC -output build/macosx/bin/$CONFIG$EXTRA_OUT/$1
     du -hs build/macosx/bin/$CONFIG$EXTRA_OUT/$1
 }
 
 # Gen compile commands
 if [[ $OS != "wasm" ]]; then
-    $RUNTIME_PATH/build_rive.sh compdb $FLUTTER_RUNTIME $CROSS_COMPILE_OS --variant=$VARIANT
+    $RUNTIME_PATH/build_rive.sh compdb $FLUTTER_RUNTIME $RIVE_SCRIPTNET $CROSS_COMPILE_OS --variant=$VARIANT
 fi
 # Generate project files.
 
@@ -284,8 +331,8 @@ if [[ $OS = "wasm" ]]; then
     # ninja does not track the emcc --pre-js/--post-js glue as a dependency of
     # rive_native.js, so a glue-only change leaves a stale link ("ninja: no
     # work to do"). Force the relink when the glue is newer than the output.
-    WASM_OUT="out/$CONFIG/$OS$EXTRA_OUT"
-    for glue in platform/wasm/init.js platform/wasm/scripting_work_callbacks.js platform/wasm/externs.js; do
+    WASM_OUT="$(out_dir $machine wasm)"
+    for glue in platform/wasm/init.js platform/wasm/scripting_work_callbacks.js platform/wasm/externs.js ../../runtime/src/wasm/web/rive_scripting_pre.js; do
         if [[ -f "$WASM_OUT/rive_native.js" && "$glue" -nt "$WASM_OUT/rive_native.js" ]]; then
             echo "wasm glue $glue changed; forcing relink"
             rm -f "$WASM_OUT/rive_native.js" "$WASM_OUT/rive_native.wasm"
@@ -296,12 +343,12 @@ if [[ $OS = "wasm" ]]; then
     if [[ -f "../../editor/web/index.html" ]]; then
         EDITOR_WEB=../../editor/web/$OS$EXTRA_OUT/
         mkdir -p $EDITOR_WEB
-        cp out/$CONFIG/$OS$EXTRA_OUT/rive_native.js $EDITOR_WEB
-        cp out/$CONFIG/$OS$EXTRA_OUT/rive_native.wasm $EDITOR_WEB
+        cp $WASM_OUT/rive_native.js $EDITOR_WEB
+        cp $WASM_OUT/rive_native.wasm $EDITOR_WEB
     fi
     mkdir -p wasm/$OS$EXTRA_OUT
-    cp out/$CONFIG/$OS$EXTRA_OUT/rive_native.js wasm/$OS$EXTRA_OUT
-    cp out/$CONFIG/$OS$EXTRA_OUT/rive_native.wasm wasm/$OS$EXTRA_OUT
+    cp $WASM_OUT/rive_native.js wasm/$OS$EXTRA_OUT
+    cp $WASM_OUT/rive_native.wasm wasm/$OS$EXTRA_OUT
 
 elif [[ $OS = "android" ]]; then
     # arm
@@ -366,7 +413,10 @@ elif [[ $machine = "linux" ]]; then
             # Remove scripting marker if it exists from a previous editor build
             rm -f ../linux/rive_marker_linux_scripting
         fi
+        merge_wamr_into_rive "$(out_dir $machine $LINUX_ARCH)"
         cp -R $(out_dir $machine $LINUX_ARCH)/*.a $COPY_TO
+        mv $COPY_TO/librive_full.a $COPY_TO/librive.a
+        rm -f $COPY_TO/libwamr.a $COPY_TO/libbinaryen.a
         du -hs $COPY_TO/librive_native.a
         du -hs $COPY_TO/librive_harfbuzz.a
         du -hs $COPY_TO/librive_pls_renderer.a
@@ -408,13 +458,14 @@ elif [[ $machine = "macosx" ]]; then
             TARGET_DIR+="$CONFIG"
         fi
         mkdir -p $TARGET_DIR
+        merge_wamr_into_rive "$OUT_DIR"
         cp $OUT_DIR/librive_native.a $TARGET_DIR
         cp $OUT_DIR/librive_harfbuzz.a $TARGET_DIR
         cp $OUT_DIR/librive_pls_renderer.a $TARGET_DIR
         cp $OUT_DIR/librive_sheenbidi.a $TARGET_DIR
         cp $OUT_DIR/libminiaudio.a $TARGET_DIR
         cp $OUT_DIR/librive_decoders.a $TARGET_DIR
-        cp $OUT_DIR/librive.a $TARGET_DIR
+        cp $OUT_DIR/librive_full.a $TARGET_DIR/librive.a
         cp $OUT_DIR/librive_yoga.a $TARGET_DIR
         cp $OUT_DIR/liblibpng.a $TARGET_DIR
         cp $OUT_DIR/libzlib.a $TARGET_DIR
@@ -450,13 +501,15 @@ elif [[ $machine = "macosx" ]]; then
                 # When building for the flutter runtime our same premake config
                 # builds stub stylua libs, so we have nothing else to do here.
             fi
+            merge_wamr_into_rive "$(out_dir macosx x64)"
+            merge_wamr_into_rive "$(out_dir macosx arm64)"
             rive_native_lipo_macosx librive_native.a
             rive_native_lipo_macosx librive_harfbuzz.a
             rive_native_lipo_macosx librive_pls_renderer.a
             rive_native_lipo_macosx librive_sheenbidi.a
             rive_native_lipo_macosx libminiaudio.a
             rive_native_lipo_macosx librive_decoders.a
-            rive_native_lipo_macosx librive.a
+            rive_native_lipo_macosx librive.a librive_full.a
             rive_native_lipo_macosx librive_yoga.a
             rive_native_lipo_macosx liblibpng.a
             rive_native_lipo_macosx libzlib.a
@@ -476,6 +529,7 @@ elif [[ $machine = "macosx" ]]; then
             # Markup conversion behind .rml export (real lib for the editor,
             # dummy stub in flutter_runtime builds).
             rive_native_lipo_macosx librml.a
+            rive_native_lipo_macosx librive_codec.a
             # To ensure that the macos podspec file does not overwrite the binaries by downloading them from our bucket
             touch ../macos/rive_marker_macos_development
         fi
@@ -490,7 +544,7 @@ elif [[ $machine = "windows" ]]; then
     fi
     export RIVE_OUT=$(out_dir windows x64)
 
-    $RUNTIME_PATH/build_rive.sh $ACTUAL_CONFIG x64 $FLUTTER_RUNTIME --variant=$VARIANT $USE_DEFAULT_RUNTIME $WITH_MICROPROFILE --with_rive_canvas --with_rive_scripting $RIVE_TOOLS --with_rive_path_query $RIVE_DECODERS --with_rive_text --with_rive_layout --with_rive_audio=$RIVE_AUDIO --config=$ACTUAL_CONFIG --out=$(out_dir windows x64) --shared
+    $RUNTIME_PATH/build_rive.sh $ACTUAL_CONFIG x64 $FLUTTER_RUNTIME --variant=$VARIANT $USE_DEFAULT_RUNTIME $WITH_MICROPROFILE $SCRIPTING_VM_FLAG --with_rive_canvas --with_rive_scripting $RIVE_TOOLS --with_rive_path_query $RIVE_DECODERS --with_rive_text --with_rive_layout --with_rive_audio=$RIVE_AUDIO $RIVE_SCRIPTNET --config=$ACTUAL_CONFIG --out=$(out_dir windows x64) --shared
     pushd $(out_dir windows x64)
     msbuild.exe rive.sln -m:$NUMBER_OF_PROCESSORS
     popd

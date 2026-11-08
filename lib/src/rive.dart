@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:ui' show Color, VoidCallback;
+import 'dart:ui' show BlendMode, Color, VoidCallback;
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/services.dart'
     show AssetBundle, HardwareKeyboard, LogicalKeyboardKey, rootBundle;
+import 'package:flutter/widgets.dart' show WidgetsFlutterBinding;
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 import 'package:rive_native/focus.dart' as focus;
 import 'package:rive_native/rive_luau.dart';
+import 'package:rive_native/rive_wasm_scripting.dart' show WasmScriptingVM;
 import 'package:rive_native/semantics.dart';
 
 import '../rive_native.dart';
@@ -70,6 +73,10 @@ abstract class Factory {
   RenderText makeText();
 
   /* INTERNAL */
+
+  /// Called right before a file's synchronous native load.
+  @internal
+  void startedDecodingFile() {}
 
   @internal
   Future<void> completedDecodingFile(bool success);
@@ -175,11 +182,49 @@ abstract class AudioAsset extends FileAsset {
 /// An unrecognized asset type in a Rive file.
 abstract class UnknownAsset extends FileAsset {}
 
+/// Calls [File.frameBoundary] on every live file once a frame, after the
+/// frame has advanced and drawn everything.
+abstract final class _FrameBoundaries {
+  // Weak so a file nobody disposes still finalizes.
+  static final _files = <WeakReference<File>>[];
+  static bool _scheduled = false;
+
+  static void track(File file) {
+    _files.add(WeakReference(file));
+    if (_scheduled) {
+      return;
+    }
+    _scheduled = true;
+    final binding = WidgetsFlutterBinding.ensureInitialized();
+    binding.addPersistentFrameCallback((_) {
+      if (_files.isNotEmpty) {
+        binding.addPostFrameCallback(_service);
+      }
+    });
+  }
+
+  static void _service(Duration _) {
+    _files.removeWhere((file) => file.target == null);
+    for (final file in _files) {
+      final warning = file.target?.frameBoundary();
+      if (warning != null && kDebugMode) {
+        debugPrint(warning);
+      }
+    }
+  }
+}
+
 /// A loaded Rive file containing artboards, animations, and view models.
 ///
 /// Use the static methods [File.asset], [File.url], [File.path], or
 /// [File.decode] to load a Rive file.
 abstract class File {
+  /// Every file has its wasm scripts serviced at the end of each frame, so
+  /// hosts never call [frameBoundary] themselves.
+  File() {
+    _FrameBoundaries.track(this);
+  }
+
   /// Releases all resources associated with this file.
   ///
   /// Call this when you're done using the file to free memory.
@@ -202,6 +247,10 @@ abstract class File {
   /// Set [frameOrigin] to `false` to position the artboard at its original
   /// coordinates rather than centering it at (0, 0).
   Artboard? artboardAt(int index, {bool frameOrigin = true});
+
+  /// The artboard at [index] instanced as a paint source (an artboard a shape
+  /// is filled with), or `null` if out of bounds or unsupported here.
+  ArtboardPaintSource? artboardPaintSource(int index) => null;
 
   /// Byte extent of the artboard at [index] within the stream this file was
   /// imported from, relative to the end of the header, as `[start, end)`.
@@ -290,6 +339,20 @@ abstract class File {
   @internal
   void setScriptingState(LuauState vm);
 
+  /// Hands a booted wasm VM to the file, which owns it from here; every
+  /// script asset rebinds to it. Wasm flavored libraries only.
+  @internal
+  void adoptWasmScriptingVM(WasmScriptingVM vm);
+
+  /// Whether a wasm VM runs this file's scripts, adopted or booted from a
+  /// module asset the file carries.
+  bool get hasWasmScriptingVM;
+
+  /// Requires [registryName] on the adopted wasm VM and binds the result to
+  /// the script asset named [moduleName]; false when neither matches.
+  @internal
+  bool registerWasmScript(String moduleName, String registryName);
+
   /// The number of view models in the Rive file
   int get viewModelCount;
 
@@ -312,6 +375,20 @@ abstract class File {
 
   /// The names of the file's global view models, in file order.
   List<String> get globalViewModelNames;
+
+  /// Services the file's AnimaScript modules at the end of a frame: collects
+  /// what their scripts allocated during it and releases the host handles
+  /// they no longer hold. Without it a wasm script's heap only ever grows,
+  /// until one of its calls runs past the script time budget. That holds on
+  /// web too: the collector lives in the module, in its own linear memory,
+  /// which the browser's engine never collects.
+  ///
+  /// Hosts should not call it: the library already does at the end of every
+  /// frame Flutter draws, and prints what it returns in debug builds.
+  /// Returns a warning the runtime wants surfaced (a handle leak, the heap
+  /// growing), or null. Does nothing for a file without wasm scripts, or on a
+  /// runtime built without them or before this service.
+  String? frameBoundary();
 
   /// The names of the file's artboards, in file order. Index into
   /// [artboardAt] with a name's position.
@@ -1270,6 +1347,9 @@ abstract class Artboard {
   /// position.
   bool get frameOrigin;
 
+  /// Whether the artboard changed since it was last drawn. Drawing clears it.
+  bool get didChange;
+
   /// Sets whether the artboard origin is at frame center or original position.
   set frameOrigin(bool value);
 
@@ -1375,8 +1455,36 @@ abstract class Artboard {
 
   @internal
   void drawInternal(Renderer renderer);
+
+  /// Draws this artboard as a bitmap through the mesh buffers. False when the
+  /// renderer can't rasterize offscreen; the caller draws undeformed.
+  @internal
+  bool drawThroughMesh(
+    Renderer renderer,
+    double resolution,
+    VertexRenderBuffer vertices,
+    VertexRenderBuffer uvs,
+    IndexRenderBuffer indices,
+    BlendMode blendMode,
+    double opacity,
+  ) => false;
+
+  /// Maps 0..1 mesh UVs onto the raster. Null when none can be made.
+  @internal
+  Mat2D? meshUVTransform(double resolution) => null;
+
+  /// The live rotation/scale of this instance. Null on older libraries.
+  @internal
+  Mat2D? get selfTransform => null;
+
+  /// The live Bitmap Cache resolution, 1 without one. Null on older
+  /// libraries.
+  @internal
+  double? get rasterResolution => null;
   @internal
   void addToRenderPath(RenderPath renderPath, Mat2D transform);
+  /// Does nothing: the runtime's artboards no longer reset at the end of a
+  /// frame. Kept for callers until it's removed.
   @internal
   void reset();
   @internal
@@ -1387,6 +1495,11 @@ abstract class Artboard {
   void parentIsRow(bool isRow);
   @internal
   void parentIsStack(bool isStack);
+
+  /// Pins this artboard, hosted in a virtualized grid, to a cell (0-based);
+  /// -1 leaves it to auto placement.
+  @internal
+  void virtualGridCell(int column, int row);
   @internal
   void widthIntrinsicallySizeOverride(bool intrinsic);
   @internal
@@ -1402,7 +1515,8 @@ abstract class Artboard {
       double p0,
       double p1,
       double p2,
-      double p3);
+      double p3,
+      int scriptHandle);
 
   /// Applies [cascadeLayoutStyle] to every artboard in [artboards] in a single
   /// FFI/WASM round trip. The implementation packs native pointers into a
@@ -1417,7 +1531,8 @@ abstract class Artboard {
       double p0,
       double p1,
       double p2,
-      double p3);
+      double p3,
+      int scriptHandle);
 
   @internal
   void cascadeCollapse(bool collapse);
@@ -1511,6 +1626,36 @@ abstract class Artboard {
   int? get artboardUniqueId;
 }
 
+/// An artboard a shape is painted with: one instance of it, playing its
+/// default scene, rasterized offscreen whenever it changes and applied with
+/// [RenderPaint.modulatedArtboard].
+///
+/// Obtain via [File.artboardPaintSource].
+abstract class ArtboardPaintSource {
+  /// Bit set in [advance]'s result when something wants to keep advancing.
+  static const int keepGoing = 1;
+
+  /// Bit set in [advance]'s result when the artboard changed, so whatever
+  /// paints with it has to redraw.
+  static const int changed = 2;
+
+  /// Advances the scene by [elapsedSeconds] with the runtime's AdvanceFlags
+  /// bits in [flags]. Returns [keepGoing] and/or [changed].
+  int advance(double elapsedSeconds, int flags);
+
+  /// The artboard's own box, in its units.
+  AABB get bounds;
+
+  /// Binds the source to [dataContext], the native context of the artboard
+  /// the paint is in, or clears it (null).
+  void setDataContext(InternalDataContext? dataContext) {}
+
+  /// Applies pending binds. Returns whether the artboard changed.
+  bool updateDataBinds() => false;
+
+  void dispose();
+}
+
 /// A reference to an artboard that can be bound to a view model property.
 ///
 /// Obtain via [File.artboardToBind] and assign to [ViewModelInstanceArtboard.value].
@@ -1546,7 +1691,6 @@ abstract class InternalViewModelInstanceValue<T> {
   int instancePointerAddress = 0;
   bool suppressCallback = false;
   void dispose();
-  void advanced();
   set value(T val);
   set nativeValue(T val);
   void onChanged(void Function(T value) callback);
@@ -1585,7 +1729,10 @@ abstract interface class InternalViewModelInstanceString
 /// Use [ViewModelInstanceTrigger] instead.
 @internal
 abstract interface class InternalViewModelInstanceTrigger
-    extends InternalViewModelInstanceValue<int> {}
+    extends InternalViewModelInstanceValue<int> {
+  /// Adds [fires] to the runtime's count, without echoing to onChanged.
+  void fire(int fires);
+}
 
 /// This class is used internally and should not be used directly.
 ///
@@ -1724,6 +1871,14 @@ enum HitResult {
 
   /// An opaque interactive element was hit.
   hitOpaque,
+}
+
+/// Mouse button a pointer down/up belongs to. Listeners match on it; touch
+/// and stylus input is always [primary].
+enum PointerButton {
+  primary,
+  secondary,
+  middle,
 }
 
 /// Keyboard modifier keys for input events.
@@ -2455,9 +2610,11 @@ abstract class StateMachine
   /// The main view model instance currently bound to the state machine, or
   /// null if none is bound yet. This never creates one - defaults exist
   /// after [bind]. Reading twice returns the same object.
-  ViewModelInstance? get boundRuntimeViewModelInstance =>
-      _readSlot(_mainSlot, nativeMainViewModelInstanceIdentity(),
-          nativeMainViewModelInstance, (slot) => _mainSlot = slot);
+  ViewModelInstance? get boundRuntimeViewModelInstance => _readSlot(
+      _mainSlot,
+      nativeMainViewModelInstanceIdentity(),
+      nativeMainViewModelInstance,
+      (slot) => _mainSlot = slot);
 
   /// Returns a list of events that have been reported by the state machine.
   List<Event> reportedEvents();
@@ -2468,22 +2625,62 @@ abstract class StateMachine
   bool hitTest(Vec2D position);
 
   /// Notifies the state machine of a pointer down event at [position].
-  HitResult pointerDown(Vec2D position, {int pointerId = 0});
+  HitResult pointerDown(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary});
 
   /// Notifies the state machine of a pointer move event at [position].
   HitResult pointerMove(Vec2D position, {double? timeStamp, int pointerId = 0});
 
   /// Notifies the state machine of a pointer up event at [position].
-  HitResult pointerUp(Vec2D position, {int pointerId = 0});
+  HitResult pointerUp(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary});
 
   /// Notifies the state machine that the pointer exited at [position].
   HitResult pointerExit(Vec2D position, {int pointerId = 0});
 
+  /// Notifies the state machine of indirect scroll input at [position] -- a
+  /// wheel, or a trackpad gesture the platform already classified as a
+  /// scroll. Direct touch scrolling stays on the pointer methods above.
+  ///
+  /// These five default to doing nothing so that adding them stays source
+  /// compatible for anything implementing StateMachine, matching the no-op
+  /// defaults on the C++ Scene. The runtime implementations override them.
+  HitResult pointerScroll(Vec2D position, ScrollEvent event,
+          {double? timeStamp, int pointerId = 0}) =>
+      HitResult.none;
+
+  /// Whether anything under [position] would move for [event]. Lets a host
+  /// chain the gesture outward without committing it first.
+  bool wantsScroll(Vec2D position, ScrollEvent event) => false;
+
+  /// Whether an interactive scroll view sits under [position] at all, even
+  /// one that cannot move. Keeps a gesture from escaping to the host.
+  bool hasScrollTargetAt(Vec2D position) => false;
+
+  /// Whether a listener under [position] responds to presses of [button],
+  /// looking through nested artboards. Lets a host keep a mouse button for
+  /// its own use wherever nothing in the scene wants it.
+  bool listensToButtonAt(Vec2D position, PointerButton button) => false;
+
+  /// Whether an opaque hit that cannot scroll sits under [position]. It
+  /// blocks scroll to whatever lies behind it, as an opaque hit does for
+  /// pointer events.
+  bool scrollOccludedAt(Vec2D position) => false;
+
+  /// Whether a scroll gesture is currently latched to a view in this state
+  /// machine.
+  bool get hasScrollLatch => false;
+
+  /// Ends any scroll gesture in flight, latch included.
+  void cancelScroll() {}
+
   /// Notifies the state machine of a drag start event at [position].
-  HitResult dragStart(Vec2D position, {double? timeStamp});
+  HitResult dragStart(Vec2D position,
+      {double? timeStamp, PointerButton button = PointerButton.primary});
 
   /// Notifies the state machine of a drag end event at [position].
-  HitResult dragEnd(Vec2D position, {double? timeStamp});
+  HitResult dragEnd(Vec2D position,
+      {double? timeStamp, PointerButton button = PointerButton.primary});
 
   /// Submit a binary batch of gamepad records (connected/update/disconnected)
   /// using the wire format defined in `gamepad_batch.hpp`. Returns `false`
@@ -2594,9 +2791,8 @@ abstract class StateMachine
       _globalSlots[name],
       nativeGlobalViewModelInstanceIdentity(name),
       () => nativeGlobalViewModelInstance(name),
-      (slot) => slot == null
-          ? _globalSlots.remove(name)
-          : _globalSlots[name] = slot);
+      (slot) =>
+          slot == null ? _globalSlots.remove(name) : _globalSlots[name] = slot);
 
   /// The canonical read of a slot: an empty slot (identity 0 - or an invalid
   /// name) releases any stale wrapper and stores null; an occupied slot

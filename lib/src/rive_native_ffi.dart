@@ -57,12 +57,12 @@ final int Function(Pointer<Void>)? _deferredCanAccept =
             .asFunction()
         : null;
 // Android-only per-texture pacing gate. A lazy final, so a platform that
-// never reads it never resolves the symbol.
-// A leaf call: the gate only reads two atomics, and it runs every tick.
+// never reads it never resolves the symbol. Not a leaf call: in hardware
+// buffer mode it also pushes a finished frame to Flutter through JNI.
 final int Function(Pointer<Void>) _textureCanAcceptDeferredFrame = nativeLib
     .lookup<NativeFunction<Int32 Function(Pointer<Void>)>>(
         'riveTextureCanAcceptDeferredFrame')
-    .asFunction(isLeaf: true);
+    .asFunction();
 final Pointer<Void> Function(Pointer<Void>) _nativeTexture = nativeLib
     .lookup<NativeFunction<Pointer<Void> Function(Pointer<Void>)>>(
       'nativeTexture',
@@ -202,25 +202,15 @@ base class _NativeRenderTexture extends RenderTexture {
   @override
   void dispose() {
     _disposed = true;
-    // The native texture is destroyed on a delay, so drop the pointer now:
-    // anything that still calls in (the pacing gate, a late clear) then sees
-    // a disposed texture instead of reaching a freed one.
-    _rendererPtr = nullptr;
-    _appliedSessionAddress = 0;
+    // The native texture is destroyed on a delay, when removeTexture lands, so
+    // drop the pointer now: anything that still calls in (the pacing gate, a
+    // late clear) then sees a disposed texture instead of reaching a freed one.
+    _leaveSessionAndDropHost();
     removeAllTextureChangedListeners();
     final factory = _deferredFactory;
     if (factory != null) {
       forgetDeferredAttachedTexture(factory, this);
     }
-    // Leave the session here, on the recording thread; the platform frees the
-    // host later, off it, and must not touch session state.
-    if (_appliedSessionAddress != 0 && _rendererPtr != nullptr) {
-      _textureUseDeferredSession(_rendererPtr, nullptr);
-    }
-    // The native host lives on until removeTexture lands, so nothing here may
-    // reach it once disposed.
-    _rendererPtr = nullptr;
-    _appliedSessionAddress = 0;
     _deferredFactory = null;
     _deferredSession = nullptr;
     if (_textureId != -1) {
@@ -281,6 +271,8 @@ base class _NativeRenderTexture extends RenderTexture {
     final result = await methodChannel.invokeMethod('createTexture', {
       'width': width == 0 ? 1 : width,
       'height': height == 0 ? 1 : height,
+      // Android reads it; the other platforms ignore it.
+      'hardwareBuffers': RiveNative.androidHardwareBuffers,
     });
     int? textureId = result['textureId'] as int?;
     // Disposed while the platform call was in flight: the texture it just
@@ -294,15 +286,10 @@ base class _NativeRenderTexture extends RenderTexture {
     _actualWidth = width;
     _actualHeight = height;
     String renderer = result['renderer'] as String;
-    // The old host leaves its session on this thread before the platform
-    // frees it, so its target is handed back rather than leaked.
-    if (_appliedSessionAddress != 0 && _rendererPtr != nullptr) {
-      _textureUseDeferredSession(_rendererPtr, nullptr);
-    }
+    // The new renderer never saw the session, the next attach must cross FFI.
+    _leaveSessionAndDropHost();
     _rendererPtr = Pointer<Void>.fromAddress(
         int.parse(renderer.substring(renderer.indexOf('x') + 1), radix: 16));
-    // The new renderer never saw the session, the next attach must cross FFI.
-    _appliedSessionAddress = 0;
 
     if (textureId != null) {
       _allTextures.add(textureId);
@@ -327,9 +314,19 @@ base class _NativeRenderTexture extends RenderTexture {
   }) =>
       _RiveNativeView(this, painter, resolution, key: key);
 
-  void _markDestroyed() {
+  // The host leaves its session here, on the recording thread, before the
+  // pointer goes: the platform frees the host later, off this thread, and must
+  // not touch session state. Until then its target stays in the session.
+  void _leaveSessionAndDropHost() {
+    if (_appliedSessionAddress != 0 && _rendererPtr != nullptr) {
+      _textureUseDeferredSession(_rendererPtr, nullptr);
+    }
     _rendererPtr = nullptr;
     _appliedSessionAddress = 0;
+  }
+
+  void _markDestroyed() {
+    _leaveSessionAndDropHost();
     final textureIdToDestroy = _textureId;
     if (textureIdToDestroy != -1) {
       _textureId = -1;
@@ -491,10 +488,24 @@ base class _HeadlessRenderTexture extends RenderTexture {
   }
 }
 
+// Newer than some prebuilt libraries; null there.
+final void Function(double)? _setOffscreenDisplayScale =
+    nativeLib.providesSymbol('setOffscreenDisplayScale')
+    ? nativeLib
+          .lookup<NativeFunction<Void Function(Float)>>(
+            'setOffscreenDisplayScale',
+          )
+          .asFunction()
+    : null;
+
 class _RiveNativeFFI extends RiveNative {
   final methodChannel = const MethodChannel('rive_native');
   Pointer<Void> _headlessContext = nullptr;
   rive.Factory? _headlessFactory;
+
+  @override
+  void setRasterDisplayScale(double scale) =>
+      _setOffscreenDisplayScale?.call(scale);
 
   @override
   RenderTexture makeRenderTexture({bool deferred = false}) {

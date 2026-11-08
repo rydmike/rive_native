@@ -770,6 +770,10 @@ abstract class Font {
 abstract class TextHelper {
   double convertStringToNumber(String value);
   double convertIntToNumber(int value);
+
+  /// Formats [value] with a printf-style [spec] exactly like the runtime's
+  /// string template converter. Null when the native library predates it.
+  String? formatTemplateNumber(double value, String spec);
   static TextHelper? init() {
     return initTextHelper();
   }

@@ -99,6 +99,10 @@ class BinaryReader {
       // correctly for integers up to 2^53.
       double multiplier = 1;
       while (true) {
+        if (isEOF) {
+          throw RangeError('Unexpected end of buffer while reading VarUint '
+              '(readIndex: $readIndex, length: ${buffer.lengthInBytes})');
+        }
         int byte = buffer.getUint8(readIndex++) & 0xff;
         result += ((byte & 0x7f) * multiplier).toInt();
         if ((byte & 0x80) == 0) break;
@@ -107,6 +111,10 @@ class BinaryReader {
     } else {
       int shift = 0;
       while (true) {
+        if (isEOF) {
+          throw RangeError('Unexpected end of buffer while reading VarUint '
+              '(readIndex: $readIndex, length: ${buffer.lengthInBytes})');
+        }
         int byte = buffer.getUint8(readIndex++) & 0xff;
         result |= (byte & 0x7f) << shift;
         if ((byte & 0x80) == 0) break;

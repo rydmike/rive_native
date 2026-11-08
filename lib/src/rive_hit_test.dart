@@ -96,6 +96,69 @@ base mixin RivePointerEventMixin on rive.RivePainter {
     return inverseViewTransform * rive.Vec2D.fromOffset(position);
   }
 
+  /// Whether [event] is indirect scroll input rather than a pointer gesture.
+  static bool isScrollEvent(PointerEvent event) =>
+      event is PointerScrollEvent ||
+      event is PointerScrollInertiaCancelEvent ||
+      event is PointerPanZoomStartEvent ||
+      event is PointerPanZoomUpdateEvent ||
+      event is PointerPanZoomEndEvent;
+
+  /// Maps a local-space delta into artboard space: [localToArtboard] with the
+  /// translation dropped, since a delta is a vector.
+  @nonVirtual
+  rive.Vec2D localDeltaToArtboard({
+    required Offset delta,
+    required rive.AABB artboardBounds,
+    required rive.Fit fit,
+    required Alignment alignment,
+    required Size size,
+    double scaleFactor = RiveDefaults.layoutScaleFactor,
+  }) {
+    rive.Vec2D map(Offset offset) => localToArtboard(
+          position: offset,
+          artboardBounds: artboardBounds,
+          fit: fit,
+          alignment: alignment,
+          size: size,
+          scaleFactor: scaleFactor,
+        );
+    return map(delta) - map(Offset.zero);
+  }
+
+  /// Dispatches indirect scroll input to [stateMachine]. Flutter reports real
+  /// phases, so this host sends [rive.ScrollPhase.end] on release and lets the
+  /// runtime's physics own the fling.
+  ///
+  /// [delta] is artboard-space, and is the distance the content should move.
+  @protected
+  rive.HitResult dispatchScrollEvent(
+    rive.StateMachine stateMachine,
+    PointerEvent event,
+    rive.Vec2D position,
+    rive.Vec2D delta,
+  ) {
+    final rive.ScrollPhase phase;
+    var precise = true;
+    if (event is PointerScrollEvent) {
+      phase = rive.ScrollPhase.update;
+      precise = event.kind == PointerDeviceKind.trackpad;
+    } else if (event is PointerScrollInertiaCancelEvent) {
+      phase = rive.ScrollPhase.inertiaCancel;
+    } else if (event is PointerPanZoomStartEvent) {
+      phase = rive.ScrollPhase.begin;
+    } else if (event is PointerPanZoomEndEvent) {
+      phase = rive.ScrollPhase.end;
+    } else {
+      phase = rive.ScrollPhase.update;
+    }
+    return stateMachine.pointerScroll(
+      position,
+      rive.ScrollEvent(delta: delta, phase: phase, precise: precise),
+      timeStamp: event.timeStamp.inMicroseconds / Duration.microsecondsPerSecond,
+    );
+  }
+
   /// Dispatches a Flutter [PointerEvent] to [stateMachine], mapping it to the
   /// matching state machine pointer call(s) and returning the resulting
   /// [rive.HitResult].

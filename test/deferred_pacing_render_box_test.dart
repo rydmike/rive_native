@@ -10,10 +10,10 @@ import 'src/render_texture_probe.dart';
 /// Pacing tests for the dedicated-texture paint path
 /// ([rive.RiveNativeRenderBox.paintTexture]).
 ///
-/// A tick skipped by a pacing gate (worker behind, failed clear) banks its
-/// elapsed time and hands the sum to the next paint - matching the
-/// shared-panel path - so gating changes cadence, never animation speed.
-/// Paused ticks drop theirs instead.
+/// A tick skipped by the worker-behind pacing gate banks its elapsed time and
+/// hands the sum to the next advance - matching the shared-panel path - so
+/// gating changes cadence, never animation speed. A failed clear skips only
+/// the draw: the advance already ran. Paused ticks drop theirs instead.
 class _NoopRenderer extends rive.Renderer {
   @override
   dynamic noSuchMethod(Invocation invocation) {}
@@ -72,11 +72,12 @@ base class _SpyRenderTexture extends rive.RenderTexture {
   void dispose() {}
 }
 
-/// Records the elapsed seconds each paint receives. A null [riveFactory]
+/// Records the elapsed seconds each advance receives. A null [riveFactory]
 /// keeps `_ensureDeferredSession` off the FFI.
 final class _RecordingPainter extends rive.RenderTexturePainter {
   final List<double> elapsedLog = [];
-  bool advance = true;
+  int paintCount = 0;
+  bool keepAdvancing = true;
 
   @override
   rive.Factory? get riveFactory => null;
@@ -85,15 +86,17 @@ final class _RecordingPainter extends rive.RenderTexturePainter {
   Color get background => const Color(0x00000000);
 
   @override
-  bool paint(
+  bool advance(double elapsedSeconds) {
+    elapsedLog.add(elapsedSeconds);
+    return keepAdvancing;
+  }
+
+  @override
+  void paint(
     rive.RenderTexture texture,
     double devicePixelRatio,
     Size size,
-    double elapsedSeconds,
-  ) {
-    elapsedLog.add(elapsedSeconds);
-    return advance;
-  }
+  ) => paintCount++;
 }
 
 class _ProbeRenderBox extends rive.RiveNativeRenderBox {
@@ -154,11 +157,6 @@ void main() {
           set: (texture, gated) => texture.acceptDeferredFrames = !gated,
           gatedTicks: 2,
         ),
-        (
-          name: 'failed clear',
-          set: (texture, gated) => texture.clearResult = !gated,
-          gatedTicks: 1,
-        ),
       ];
   for (final gate in gates) {
     testWidgets('${gate.name} gate banks elapsed into the next paint', (
@@ -198,6 +196,32 @@ void main() {
       );
     });
   }
+
+  testWidgets('a failed clear skips the draw but not the advance', (
+    tester,
+  ) async {
+    final texture = _SpyRenderTexture();
+    final painter = _RecordingPainter();
+    await tester.pumpWidget(host(_ProbeWidget(texture, painter)));
+    await tester.pump(_frame);
+    final advancesBefore = painter.elapsedLog.length;
+    final paintsBefore = painter.paintCount;
+
+    texture.clearResult = false;
+    await tester.pump(_frame);
+    expect(painter.paintCount, paintsBefore, reason: 'nothing is drawn');
+    expect(painter.elapsedLog.length, advancesBefore + 1);
+    expect(painter.elapsedLog.last, closeTo(_frameSeconds, 1e-6));
+
+    texture.clearResult = true;
+    await tester.pump(_frame);
+    expect(painter.paintCount, paintsBefore + 1);
+    expect(
+      painter.elapsedLog.last,
+      closeTo(_frameSeconds, 1e-6),
+      reason: 'the failed tick already advanced, so nothing is banked',
+    );
+  });
 
   testWidgets('paused ticks drop their elapsed instead of banking it', (
     tester,
@@ -261,7 +285,7 @@ void main() {
     tester,
   ) async {
     final texture = _SpyRenderTexture();
-    final painter = _RecordingPainter()..advance = false;
+    final painter = _RecordingPainter()..keepAdvancing = false;
     await tester.pumpWidget(host(_ProbeWidget(texture, painter)));
     await tester.pump(_frame);
     final paintsBefore = painter.elapsedLog.length;
@@ -271,7 +295,7 @@ void main() {
     // worker cannot take a frame. The skipped paint must arm the ticker so
     // the repaint retries, otherwise the new texture stays blank until an
     // unrelated repaint.
-    painter.advance = true;
+    painter.keepAdvancing = true;
     texture.acceptDeferredFrames = false;
     texture.textureChanged();
     await tester.pump(_frame);

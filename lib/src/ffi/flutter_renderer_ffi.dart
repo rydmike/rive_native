@@ -155,7 +155,10 @@ class FFIFlutterFactoryImage {
 class FFIFlutterFactory extends FFIFactory implements Finalizable {
   static final _finalizer = NativeFinalizer(_deleteFlutterFactoryNative);
 
-  static final List<FFIFlutterFactoryImage> _loadingImages = [];
+  /// Images decoded while a file loads, which that file decode waits for.
+  /// Null outside a load so unrelated decodes are not awaited, see
+  /// https://github.com/rive-app/rive-flutter/issues/658.
+  static List<FFIFlutterFactoryImage>? _loadingImages;
   static final images = HashMap<int, FFIFlutterFactoryImage>();
 
   static final _pathLookup = HashMap<int, ui.Path>();
@@ -436,6 +439,19 @@ class FFIFlutterFactory extends FFIFactory implements Finalizable {
 
     if ((dirt & (PaintDirtFromNative.linear | PaintDirtFromNative.radial)) !=
         0) {
+      var xx = reader.readFloat32();
+      var xy = reader.readFloat32();
+      var yx = reader.readFloat32();
+      var yy = reader.readFloat32();
+      var tx = reader.readFloat32();
+      var ty = reader.readFloat32();
+      var gradientTransform = Float64List.fromList([
+        xx, xy, 0, 0,
+        yx, yy, 0, 0,
+        0, 0, 1, 0,
+        tx, ty, 0, 1,
+      ]);
+
       var stopCount = reader.readUint32();
       List<double> stops = [];
       List<ui.Color> colors = [];
@@ -450,7 +466,13 @@ class FFIFlutterFactory extends FFIFactory implements Finalizable {
         var centerY = reader.readFloat32();
         var radius = reader.readFloat32();
         uiPaint.shader = ui.Gradient.radial(
-            ui.Offset(centerX, centerY), radius, colors, stops);
+          ui.Offset(centerX, centerY),
+          radius,
+          colors,
+          stops,
+          ui.TileMode.clamp,
+          gradientTransform,
+        );
       } else {
         var sx = reader.readFloat32();
         var sy = reader.readFloat32();
@@ -462,6 +484,8 @@ class FFIFlutterFactory extends FFIFactory implements Finalizable {
           ui.Offset(ex, ey),
           colors,
           stops,
+          ui.TileMode.clamp,
+          gradientTransform,
         );
       }
     } else if ((dirt & PaintDirtFromNative.removeGradient) != 0) {
@@ -511,12 +535,15 @@ class FFIFlutterFactory extends FFIFactory implements Finalizable {
   }
 
   @override
+  void startedDecodingFile() => _loadingImages = [];
+
+  @override
   Future<void> completedDecodingFile(bool success) async {
-    if (success) {
+    final loading = _loadingImages;
+    _loadingImages = null;
+    if (success && loading != null) {
       // these images belong to the RiveFile loaded, so wait for them to load before
       // completing the load.
-      var loading = List<FFIFlutterFactoryImage>.from(_loadingImages);
-      _loadingImages.clear();
       for (final image in loading) {
         var completer = image.completer;
         if (completer != null) {
@@ -534,7 +561,7 @@ class FFIFlutterFactory extends FFIFactory implements Finalizable {
   Future<RenderImage?> decodeImage(Uint8List bytes) {
     final image = _makeFlutterRenderImage(pointer);
     var flutterImage = FFIFlutterFactoryImage();
-    FFIFlutterFactory._loadingImages.add(flutterImage);
+    FFIFlutterFactory._loadingImages?.add(flutterImage);
     images[_flutterRenderImageId(image)] = flutterImage;
     ui.decodeImageFromList(
       bytes,
@@ -550,7 +577,7 @@ class FFIFlutterFactory extends FFIFactory implements Finalizable {
   static void _decodeImageFromNative(
       Pointer<Void> image, int id, Pointer<Uint8> bytes, int size) {
     var flutterImage = FFIFlutterFactoryImage();
-    FFIFlutterFactory._loadingImages.add(flutterImage);
+    FFIFlutterFactory._loadingImages?.add(flutterImage);
     images[id] = flutterImage;
 
     // Copy it as the Flutter decoder is async.
@@ -586,6 +613,7 @@ final void Function(Pointer<Void>) _deleteFlutterRenderer =
     _deleteFlutterRendererNative.asFunction();
 
 class FlutterRendererFFI extends FFIRiveRenderer
+    with FlutterMaskRenderer
     implements Finalizable, FlutterRenderer {
   @override
   final ui.Canvas canvas;

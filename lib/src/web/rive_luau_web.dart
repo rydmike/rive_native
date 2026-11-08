@@ -88,6 +88,8 @@ late js.JSFunction _riveLuaPushMatrixX;
 late js.JSFunction _riveLuaPushMatrixY;
 late js.JSFunction _riveLuaToVector;
 late js.JSFunction _riveLuaPushPointerEvent;
+late js.JSFunction _riveLuaPushScrollEvent;
+late js.JSFunction _riveLuaScrollEventHitResult;
 late js.JSFunction _riveLuaPushPointerListenerInvocation;
 late js.JSFunction _riveLuaPushKeyboardListenerInvocation;
 late js.JSFunction _riveLuaPushScriptedKeyboardInvocation;
@@ -110,12 +112,12 @@ late js.JSFunction _riveLuaSetExecutionTimeout;
 late js.JSFunction _riveLuaSetPropertyOwnerTag;
 late js.JSFunction _riveLuaDisposeOrphanProperties;
 late js.JSFunction _riveLuaGetExecutionTimeout;
+late js.JSFunction _riveLuaBudgetExceeded;
 late js.JSFunction _riveLuaSetGeneratorRef;
 late js.JSFunction _riveLuaGetGeneratorRef;
 late js.JSFunction _riveLuaClearGeneratorRefs;
 late js.JSFunction _riveLuaPushBlob;
 late js.JSFunction _riveLuaPushAudioSource;
-late js.JSFunction _riveLuaAdvanceDetachedViewModels;
 late js.JSFunction _riveLuaPushShader;
 late js.JSFunction _riveLuaPushGPUFeatures;
 late js.JSFunction _riveLuaPushCanvas;
@@ -229,6 +231,10 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
     _riveLuaToVector = module['_lua_tovector'] as js.JSFunction;
     _riveLuaPushPointerEvent =
         module['_riveLuaPushPointerEvent'] as js.JSFunction;
+    _riveLuaPushScrollEvent =
+        module['_riveLuaPushScrollEvent'] as js.JSFunction;
+    _riveLuaScrollEventHitResult =
+        module['_riveLuaScrollEventHitResult'] as js.JSFunction;
     _riveLuaPushPointerListenerInvocation =
         module['_riveLuaPushPointerListenerInvocation'] as js.JSFunction;
     _riveLuaPushKeyboardListenerInvocation =
@@ -268,6 +274,7 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
         module['_riveLuaDisposeOrphanProperties'] as js.JSFunction;
     _riveLuaGetExecutionTimeout =
         module['_riveLuaGetExecutionTimeout'] as js.JSFunction;
+    _riveLuaBudgetExceeded = module['_riveLuaBudgetExceeded'] as js.JSFunction;
     _riveLuaSetGeneratorRef =
         module['_riveLuaSetGeneratorRef'] as js.JSFunction;
     _riveLuaGetGeneratorRef =
@@ -277,8 +284,6 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
     _riveLuaPushBlob = module['_riveLuaPushBlob'] as js.JSFunction;
     _riveLuaPushAudioSource =
         module['_riveLuaPushAudioSource'] as js.JSFunction;
-    _riveLuaAdvanceDetachedViewModels =
-        module['_riveLuaAdvanceDetachedViewModels'] as js.JSFunction;
     _riveLuaPushShader = module['_riveLuaPushShader'] as js.JSFunction;
     _riveLuaPushGPUFeatures =
         module['_riveLuaPushGPUFeatures'] as js.JSFunction;
@@ -919,13 +924,35 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
   }
 
   @override
-  PointerEvent pushPointerEvent(int id, Vec2D position) => PointerEventWeb(
-        _riveLuaPushPointerEvent.callAsFunction(
+  PointerEvent pushPointerEvent(int id, Vec2D position,
+          {int hitType = -1, double timeStamp = 0}) =>
+      PointerEventWeb(
+        _riveLuaPushPointerEvent.callAsFunctionEx(
           null,
           _nativePtr,
           id.toJS,
           position.x.toJS,
           position.y.toJS,
+          hitType.toJS,
+          timeStamp.toJS,
+        ) as js.JSNumber,
+      );
+
+  @override
+  ScriptScrollEvent pushScrollEvent(int id, Vec2D position, ScrollEvent event,
+          {double timeStamp = 0}) =>
+      ScriptScrollEventWeb(
+        _riveLuaPushScrollEvent.callAsFunctionEx(
+          null,
+          _nativePtr,
+          id.toJS,
+          position.x.toJS,
+          position.y.toJS,
+          event.delta.x.toJS,
+          event.delta.y.toJS,
+          event.phase.index.toJS,
+          event.precise.toJS,
+          timeStamp.toJS,
         ) as js.JSNumber,
       );
 
@@ -1210,6 +1237,10 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
       _nativePtr,
       (scriptedPath as ScriptedPathWasm).pointer,
     ) as js.JSNumber);
+    // pathAt() yields nullptr for anything that isn't a Path/PathData.
+    if (renderPathPointer.toDartInt == 0) {
+      return null;
+    }
     final webRenderPath = WebRenderPath.fromPointer(
       riveFactory,
       renderPathPointer,
@@ -1234,6 +1265,10 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
       (_riveLuaGetExecutionTimeout.callAsFunction(null, _nativePtr)
               as js.JSNumber)
           .toDartInt;
+
+  @override
+  bool get budgetExceeded =>
+      _wasmBool(_riveLuaBudgetExceeded.callAsFunction(null, _nativePtr));
 
   @override
   void setGeneratorRef(int assetId, int ref) => _riveLuaSetGeneratorRef
@@ -1272,11 +1307,6 @@ class LuauStateWasm extends LuauState implements LuauStateDiagnostics {
       (audioSource as AudioSourceWasm).nativePtr.toJS,
     ) as js.JSNumber)
         .toDartInt;
-  }
-
-  @override
-  void advanceDetachedViewModels() {
-    _riveLuaAdvanceDetachedViewModels.callAsFunction(null, _nativePtr);
   }
 
   @override
@@ -1355,6 +1385,18 @@ class PointerEventWeb extends PointerEvent {
   @override
   HitResult get hitResult =>
       HitResult.values[(_riveLuaPointerEventHitResult.callAsFunction(
+        null,
+        pointer,
+      ) as js.JSNumber)
+          .toDartInt];
+}
+
+class ScriptScrollEventWeb extends ScriptScrollEvent {
+  final js.JSAny pointer;
+  ScriptScrollEventWeb(this.pointer);
+  @override
+  HitResult get hitResult =>
+      HitResult.values[(_riveLuaScrollEventHitResult.callAsFunction(
         null,
         pointer,
       ) as js.JSNumber)

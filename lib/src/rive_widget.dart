@@ -29,6 +29,20 @@ abstract base class ArtboardPainter extends ProceduralPainter {
   void artboardChanged(Artboard artboard);
 }
 
+/// Whether [painter]'s artboard changed since it was last drawn. Painters
+/// without an artboard always report a change.
+bool _artboardDidChange(RivePainter? painter) {
+  if (painter is! RiveArtboardLayoutMixin) {
+    return true;
+  }
+  return painter.artboard?.didChange ?? true;
+}
+
+/// Whether [painter] has an artboard that changed since it was last drawn,
+/// read before a draw to tell whether the draw consumes a change.
+bool _consumesArtboardChange(RivePainter? painter) =>
+    painter is RiveArtboardLayoutMixin && (painter.artboard?.didChange ?? false);
+
 base class BasicArtboardPainter extends ArtboardPainter
     with RiveTickerAwarePainterMixin, RiveArtboardLayoutMixin {
   BasicArtboardPainter({
@@ -174,8 +188,65 @@ base class StateMachinePainter extends BasicArtboardPainter
       scaleFactor: layoutScaleFactor,
     );
 
+    if (RivePointerEventMixin.isScrollEvent(event)) {
+      _scrollEvent(stateMachine, artboard, event, position);
+      return;
+    }
+
     dispatchPointerEvent(stateMachine, event, position);
   }
+
+  void _scrollEvent(
+    StateMachine stateMachine,
+    Artboard artboard,
+    PointerEvent event,
+    Vec2D position,
+  ) {
+    Offset local;
+    if (event is PointerScrollEvent) {
+      // A wheel reports how far to scroll, not how far content travels.
+      local = -event.scrollDelta;
+    } else if (event is PointerPanZoomUpdateEvent) {
+      // A trackpad's pan already follows the fingers.
+      local = event.panDelta;
+    } else {
+      local = Offset.zero;
+    }
+    final delta = localDeltaToArtboard(
+      delta: local,
+      artboardBounds: artboard.bounds,
+      fit: fit,
+      alignment: alignment,
+      size: size,
+      scaleFactor: layoutScaleFactor,
+    );
+
+    void dispatch() {
+      final result =
+          dispatchScrollEvent(stateMachine, event, position, delta);
+      if (result == HitResult.none) {
+        return;
+      }
+      // A static scroll layout may not be ticking, and without a frame the
+      // idle timer that ends the gesture never runs.
+      scheduleRepaint();
+      stateMachine.advanceAndApply(0);
+    }
+
+    if (event is! PointerSignalEvent) {
+      // Pan/zoom events are routed by hit test and are ours already.
+      dispatch();
+      return;
+    }
+    // Claim the signal only when a scroll view is under the cursor, so an
+    // enclosing Scrollable keeps the wheel otherwise.
+    if (!stateMachine.hasScrollTargetAt(position)) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver
+        .register(event, (_) => dispatch());
+  }
+
 
   @override
   bool advance(double elapsedSeconds) {
@@ -200,10 +271,14 @@ class RiveFileWidget extends StatefulWidget {
   final ArtboardPainter painter;
   final String? artboardName;
 
+  /// When the artboard is redrawn. See [DrawOptimization].
+  final DrawOptimization drawOptimization;
+
   const RiveFileWidget({
     required this.file,
     required this.painter,
     this.artboardName,
+    this.drawOptimization = DrawOptimization.drawWhenChanged,
     super.key,
   });
 
@@ -260,6 +335,7 @@ class _RiveFileWidgetState extends State<RiveFileWidget> {
     return RiveArtboardWidget(
       artboard: artboard,
       painter: widget.painter,
+      drawOptimization: widget.drawOptimization,
     );
   }
 }
@@ -272,10 +348,14 @@ class RiveArtboardWidget extends StatefulWidget {
   /// Ignored with `Factory.flutter` (content paints at composite resolution).
   final RenderResolution renderResolution;
 
+  /// When the artboard is redrawn. See [DrawOptimization].
+  final DrawOptimization drawOptimization;
+
   const RiveArtboardWidget({
     required this.artboard,
     required this.painter,
     this.renderResolution = RenderResolution.defaultValue,
+    this.drawOptimization = DrawOptimization.drawWhenChanged,
     super.key,
   });
 
@@ -301,11 +381,15 @@ class _RiveArtboardWidgetState extends State<RiveArtboardWidget> {
   @override
   Widget build(BuildContext context) {
     if (widget.artboard.riveFactory == Factory.flutter) {
-      return FlutterRiveRendererWidget(painter: widget.painter);
+      return FlutterRiveRendererWidget(
+        painter: widget.painter,
+        drawOptimization: widget.drawOptimization,
+      );
     }
     return ArtboardWidgetRiveRenderer(
       painter: widget.painter,
       renderResolution: widget.renderResolution,
+      drawOptimization: widget.drawOptimization,
     );
   }
 }
@@ -614,10 +698,14 @@ class RiveProceduralRenderingWidget extends StatefulWidget {
   /// Ignored with `Factory.flutter` (content paints at composite resolution).
   final RenderResolution renderResolution;
 
+  /// When the painter is redrawn. See [DrawOptimization].
+  final DrawOptimization drawOptimization;
+
   const RiveProceduralRenderingWidget({
     required this.riveFactory,
     required this.painter,
     this.renderResolution = RenderResolution.defaultValue,
+    this.drawOptimization = DrawOptimization.drawWhenChanged,
     super.key,
   });
 
@@ -654,13 +742,17 @@ class _RiveRiveProceduralRenderingWidgetState
   Widget build(BuildContext context) {
     if (widget.riveFactory == Factory.flutter) {
       // Render the artboard with the Flutter renderer.
-      return FlutterRiveRendererWidget(painter: widget.painter);
+      return FlutterRiveRendererWidget(
+        painter: widget.painter,
+        drawOptimization: widget.drawOptimization,
+      );
     } else {
       // Render the artboard with the Rive Renderer.
       return ArtboardWidgetRiveRenderer(
         painter: widget.painter,
         riveFactory: widget.riveFactory,
         renderResolution: widget.renderResolution,
+        drawOptimization: widget.drawOptimization,
       );
     }
   }
@@ -676,11 +768,15 @@ class ArtboardWidgetRiveRenderer extends StatefulWidget {
   /// How the backing texture is sized. See [RenderResolution].
   final RenderResolution renderResolution;
 
+  /// When the painter is redrawn. See [DrawOptimization].
+  final DrawOptimization drawOptimization;
+
   const ArtboardWidgetRiveRenderer({
     super.key,
     this.painter,
     this.riveFactory,
     this.renderResolution = RenderResolution.defaultValue,
+    this.drawOptimization = DrawOptimization.drawWhenChanged,
   });
 
   @override
@@ -700,8 +796,12 @@ base class ArtboardWidgetPainter<T extends ProceduralPainter>
   final RiveTickerAwarePainterMixin? _tickerAwarePainter;
   final RiveArtboardLayoutMixin? _riveArtboardLayoutMixin;
   final Factory? _explicitFactory;
-  ArtboardWidgetPainter(this._painter, {Factory? riveFactory})
-      : _explicitFactory = riveFactory,
+  ArtboardWidgetPainter(
+    this._painter, {
+    Factory? riveFactory,
+    DrawOptimization drawOptimization = DrawOptimization.drawWhenChanged,
+  })  : _explicitFactory = riveFactory,
+        _drawOptimization = drawOptimization,
         _pointerEvent = _painter is RivePointerEventMixin
             ? _painter as RivePointerEventMixin
             : null,
@@ -712,32 +812,45 @@ base class ArtboardWidgetPainter<T extends ProceduralPainter>
             ? _painter as RiveArtboardLayoutMixin
             : null {
     _painter?.addListener(notifyListeners);
-    _tickerAwarePainter?.setTickerStateProvider(() => isTickerActive);
+    _tickerAwarePainter?.setTickerStateProvider(_tickerStateProvider);
   }
+
+  bool _tickerStateProvider() => isTickerActive;
 
   @override
   void dispose() {
     super.dispose();
     _painter?.removeListener(notifyListeners);
-    _tickerAwarePainter?.setTickerStateProvider(null);
+    _tickerAwarePainter?.clearTickerStateProvider(_tickerStateProvider);
   }
 
   @override
   Color get background => const Color(
       0x00000000); // TODO (GORDON): make this an override and add to canvas implementation
 
-  @override
-  bool paint(RenderTexture texture, double devicePixelRatio, Size size,
-      double elapsedSeconds) {
-    final painter = _painter;
-    if (painter == null) {
-      return false;
+  /// When the painter is redrawn. See [DrawOptimization].
+  DrawOptimization get drawOptimization => _drawOptimization;
+  DrawOptimization _drawOptimization;
+  set drawOptimization(DrawOptimization value) {
+    if (_drawOptimization == value) {
+      return;
     }
-
-    final shouldContinue = painter.advance(elapsedSeconds);
-    painter.paint(texture.renderer, size, devicePixelRatio);
-    return shouldContinue;
+    _drawOptimization = value;
+    notifyListeners();
   }
+
+  @override
+  bool advance(double elapsedSeconds) =>
+      _painter?.advance(elapsedSeconds) ?? false;
+
+  @override
+  bool get needsPaint =>
+      _drawOptimization == DrawOptimization.alwaysDraw ||
+      _artboardDidChange(_painter);
+
+  @override
+  void paint(RenderTexture texture, double devicePixelRatio, Size size) =>
+      _painter?.paint(texture.renderer, size, devicePixelRatio);
 
   @override
   MouseCursor get cursor => _pointerEvent?.cursor ?? RiveDefaults.mouseCursor;
@@ -770,8 +883,11 @@ class _ArtboardWidgetRiveRendererState
   ArtboardWidgetPainter? _painter;
   @override
   void initState() {
-    _painter =
-        ArtboardWidgetPainter(widget.painter, riveFactory: widget.riveFactory);
+    _painter = ArtboardWidgetPainter(
+      widget.painter,
+      riveFactory: widget.riveFactory,
+      drawOptimization: widget.drawOptimization,
+    );
     // Same predicate _ensureDeferredSession attaches on, so the texture is
     // acquired from the pool that matches how it will be driven. On web a
     // deferred texture reuses a canvas the replay worker already holds rather
@@ -795,10 +911,17 @@ class _ArtboardWidgetRiveRendererState
   void didUpdateWidget(covariant ArtboardWidgetRiveRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.painter != widget.painter) {
+      final oldPainter = _painter;
       setState(() {
-        _painter = ArtboardWidgetPainter(widget.painter,
-            riveFactory: widget.riveFactory);
+        _painter = ArtboardWidgetPainter(
+          widget.painter,
+          riveFactory: widget.riveFactory,
+          drawOptimization: widget.drawOptimization,
+        );
       });
+      oldPainter?.dispose();
+    } else {
+      _painter?.drawOptimization = widget.drawOptimization;
     }
   }
 
@@ -814,7 +937,14 @@ class _ArtboardWidgetRiveRendererState
 class FlutterRiveRendererWidget extends LeafRenderObjectWidget {
   final ProceduralPainter? painter;
 
-  const FlutterRiveRendererWidget({super.key, required this.painter});
+  /// When the painter is redrawn. See [DrawOptimization].
+  final DrawOptimization drawOptimization;
+
+  const FlutterRiveRendererWidget({
+    super.key,
+    required this.painter,
+    this.drawOptimization = DrawOptimization.drawWhenChanged,
+  });
 
   @override
   RenderObject createRenderObject(BuildContext context) {
@@ -822,6 +952,7 @@ class FlutterRiveRendererWidget extends LeafRenderObjectWidget {
 
     return FlutterRiveRenderBox()
       ..painter = painter
+      ..drawOptimization = drawOptimization
       ..tickerModeEnabled = tickerModeValue;
   }
 
@@ -832,6 +963,7 @@ class FlutterRiveRendererWidget extends LeafRenderObjectWidget {
 
     renderObject
       ..painter = painter
+      ..drawOptimization = drawOptimization
       ..tickerModeEnabled = tickerModeValue;
   }
 }
@@ -850,15 +982,33 @@ abstract class RiveRenderBox<T extends RivePainter> extends RenderBox
   T? _rivePainter;
   T? get rivePainter => _rivePainter;
 
+  /// Whether the next frame draws even when the artboard did not change. Set
+  /// when something outside the artboard changes what is shown: the painter
+  /// notifying (fit, alignment, input), a new painter, or a layout.
+  ///
+  /// Also set after a draw that consumed a change. That draw can show dirt
+  /// added after the update pass (a listener writing text) and it clears the
+  /// artboard's change flag, so the next frame draws again.
+  /// When the content settled on that frame, the ticker runs one more tick
+  /// for it. Painters without an artboard never arm it.
+  @protected
+  bool forceDraw = true;
+
+  void _onPainterChanged() {
+    forceDraw = true;
+    restartTickerIfStopped();
+  }
+
   @mustCallSuper
   set painter(T? value) {
     markNeedsLayout();
     if (_rivePainter == value) {
       return;
     }
-    _rivePainter?.removeListener(restartTickerIfStopped);
+    _rivePainter?.removeListener(_onPainterChanged);
     _rivePainter = value;
-    _rivePainter?.addListener(restartTickerIfStopped);
+    _rivePainter?.addListener(_onPainterChanged);
+    forceDraw = true;
     _rivePointerEvent = _rivePainter is RivePointerEventMixin
         ? _rivePainter as RivePointerEventMixin
         : null;
@@ -1009,7 +1159,7 @@ abstract class RiveRenderBox<T extends RivePainter> extends RenderBox
   @override
   void dispose() {
     _cleanUpTickerStateCallback();
-    _rivePainter?.removeListener(restartTickerIfStopped);
+    _rivePainter?.removeListener(_onPainterChanged);
     _ticker?.dispose();
     _ticker = null;
 
@@ -1183,6 +1333,7 @@ abstract class RiveRenderBox<T extends RivePainter> extends RenderBox
   @override
   void performLayout() {
     _riveArtboardResizeMixin?.updateSize(size);
+    forceDraw = true;
     restartTickerIfStopped();
     if (!sizedByParent) {
       // We can use the intrinsic size here because the intrinsic size matches
@@ -1198,23 +1349,48 @@ class FlutterRiveRenderBox extends RiveRenderBox<ProceduralPainter> {
   @override
   bool get shouldAdvance => _shouldAdvance;
 
+  /// When the painter is redrawn. See [DrawOptimization].
+  DrawOptimization get drawOptimization => _drawOptimization;
+  DrawOptimization _drawOptimization = DrawOptimization.drawWhenChanged;
+  set drawOptimization(DrawOptimization value) {
+    if (_drawOptimization == value) {
+      return;
+    }
+    _drawOptimization = value;
+    forceDraw = true;
+    restartTickerIfStopped();
+  }
+
+  // Whether the next tick runs only for the trailing draw, and whether this
+  // one does. See [forceDraw].
+  bool _trailingTickScheduled = false;
+  bool _onTrailingTick = false;
+
   @override
   @mustCallSuper
   void frameCallback(Duration duration) {
     super.frameCallback(duration);
 
+    _onTrailingTick = _trailingTickScheduled;
+    _trailingTickScheduled = false;
     _shouldAdvance = rivePainter?.advance(elapsedSeconds) ?? false;
 
     if (!_shouldAdvance) {
       stopTicker();
     }
 
-    markNeedsPaint();
+    if (forceDraw ||
+        _drawOptimization == DrawOptimization.alwaysDraw ||
+        _artboardDidChange(rivePainter)) {
+      forceDraw = false;
+      markNeedsPaint();
+    }
   }
 
   @protected
   @override
   void paint(PaintingContext context, Offset offset) {
+    final changed = _consumesArtboardChange(rivePainter);
     final Canvas canvas = context.canvas;
     canvas.save();
     canvas.translate(offset.dx, offset.dy);
@@ -1222,6 +1398,14 @@ class FlutterRiveRenderBox extends RiveRenderBox<ProceduralPainter> {
     rivePainter?.paint(renderer, size, 1.0);
     renderer.dispose();
     canvas.restore();
+    if (changed) {
+      forceDraw = true;
+      if (!isTickerActive && !_onTrailingTick) {
+        _trailingTickScheduled = true;
+        restartTickerIfStopped();
+      }
+    }
+    _onTrailingTick = false;
   }
 }
 
@@ -1368,7 +1552,9 @@ abstract class RiveNativeRenderBox extends RiveRenderBox<RenderTexturePainter> {
     }
     // Texture recreation resets the attached session, re-attach first.
     _attachedSessionAddress = 0;
-    // Paint immediately so the freshly created texture receives a draw.
+    // Paint immediately so the freshly created texture receives a draw. A
+    // pacing gate can skip it, so the draw stays forced until it happens.
+    forceDraw = true;
     paintTexture(0, forceShouldAdvance: true);
 
     // First texture: there's no previous texture being shown, so swap straight
@@ -1420,6 +1606,7 @@ abstract class RiveNativeRenderBox extends RiveRenderBox<RenderTexturePainter> {
     _renderTexture.addTextureChangedListener(_onTextureChanged);
     _attachedSessionAddress = 0; // new texture, session must re-attach
     textureIdToUse = value.textureId;
+    forceDraw = true;
     markNeedsPaint();
   }
 
@@ -1437,7 +1624,7 @@ abstract class RiveNativeRenderBox extends RiveRenderBox<RenderTexturePainter> {
   }
 
   // Elapsed time from ticks the pacing gates skipped, handed to the next
-  // paint so gating changes cadence, never animation speed (the shared-panel
+  // advance so gating changes cadence, never animation speed (the shared-panel
   // pass banks the same way).
   double _bankedElapsedSeconds = 0;
 
@@ -1489,14 +1676,23 @@ abstract class RiveNativeRenderBox extends RiveRenderBox<RenderTexturePainter> {
       return;
     }
 
+    elapsedSeconds += _bankedElapsedSeconds;
+    _bankedElapsedSeconds = 0;
+    // Advance before clearing so the draw decision sees this frame's
+    // changes. A skipped draw leaves the texture showing its last frame.
+    final shouldAdvance = painter.advance(elapsedSeconds);
+    if (!forceShouldAdvance && !forceDraw && !painter.needsPaint) {
+      _onTrailingTick = false;
+      _continueTicker(shouldAdvance);
+      return;
+    }
+
     if (!renderTexture.clear(painter.background, painter.clear)) {
+      // The advance already spent the time, so nothing is banked.
       RiveDeferredPacingDiagnostics.instance.clearFail();
-      _bankedElapsedSeconds += elapsedSeconds;
       markNeedsPaint();
       return;
     }
-    elapsedSeconds += _bankedElapsedSeconds;
-    _bankedElapsedSeconds = 0;
     // Lay out at the current size but scale into the texture's actual pixels,
     // so the content stays correct while the texture lags the size mid-resize.
     final (sx, sy) = renderTexture.actualScale(
@@ -1504,23 +1700,22 @@ abstract class RiveNativeRenderBox extends RiveRenderBox<RenderTexturePainter> {
       fallbackX: scaleWidth,
       fallbackY: scaleHeight,
     );
+    final changed = _consumesArtboardChange(painter);
+    forceDraw = false;
     final renderer = renderTexture.renderer;
     renderer.save();
     renderer.transform(Mat2D.fromScale(sx, sy));
-    final shouldAdvance = painter.paint(
-      renderTexture,
-      devicePixelRatio,
-      size,
-      elapsedSeconds,
-    );
+    painter.paint(renderTexture, devicePixelRatio, size);
     renderer.restore();
-    RiveDeferredPacingDiagnostics.instance.paint(elapsedSeconds);
-    _shouldAdvance = forceShouldAdvance == true || shouldAdvance;
-    if (_shouldAdvance) {
-      restartTickerIfStopped();
-    } else {
-      stopTicker();
+    if (changed) {
+      forceDraw = true;
     }
+    RiveDeferredPacingDiagnostics.instance.paint(elapsedSeconds);
+    final keepAdvancing = forceShouldAdvance || shouldAdvance;
+    // One more tick for the trailing draw. See [forceDraw].
+    final trailing = changed && !keepAdvancing && !_onTrailingTick;
+    _onTrailingTick = trailing;
+    _continueTicker(keepAdvancing || trailing);
     if (!renderTexture.flush(devicePixelRatio)) {
       RiveDeferredPacingDiagnostics.instance.flushFail();
       markNeedsPaint();
@@ -1530,6 +1725,18 @@ abstract class RiveNativeRenderBox extends RiveRenderBox<RenderTexturePainter> {
     RiveProfiler.instance.endFrame();
     if (painter.paintsCanvas) {
       markNeedsPaint();
+    }
+  }
+
+  // Whether the next tick runs only for the trailing draw.
+  bool _onTrailingTick = false;
+
+  void _continueTicker(bool shouldAdvance) {
+    _shouldAdvance = shouldAdvance;
+    if (_shouldAdvance) {
+      restartTickerIfStopped();
+    } else {
+      stopTicker();
     }
   }
 

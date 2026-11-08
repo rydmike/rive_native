@@ -60,6 +60,10 @@ android {
     }
 }
 
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}
+
 // Task to run rive_native setup before building
 tasks.register('runRiveNativeSetup', Exec) {
     description = "Runs rive_native setup command to prepare native libraries"

@@ -11,6 +11,13 @@ end
 filter({})
 dofile('rive_build_config.lua')
 
+-- Which scripting backend librive carries: luau (default), wasm, or both.
+-- On the web the wasm backend runs modules on the browser's engine, so WAMR
+-- and what needs a desktop (withWasmVm) stay out while the bindings stay in.
+local scriptingVm = _OPTIONS['scripting_vm'] or 'luau'
+local withWasmBackend = scriptingVm == 'wasm' or scriptingVm == 'both'
+local withWasmVm = withWasmBackend and _OPTIONS['arch'] ~= 'wasm'
+
 -- Detect where packages path is.
 if os.isfile('../../runtime/premake5_v2.lua') then
     packages = '../..'
@@ -45,9 +52,20 @@ else
         kind('StaticLib')
         files({ 'dummy.cpp' })
     end
+    project('rive_codec')
+    do
+        kind('StaticLib')
+        files({ 'dummy.cpp' })
+    end
 end
 
 if not _OPTIONS['flutter_runtime'] then
+    -- The AnimaScript bake and the std it compiles against, whatever VM
+    -- runs scripts, since every tools build exports AnimaScript. binaryen's
+    -- post pass stays native; the web keeps rasc's own optimizer.
+    RIVE_RASC_WASM = true
+    RIVE_RASC_BUNDLE_STD = true
+    RIVE_RASC_NO_BINARYEN = _OPTIONS['arch'] == 'wasm'
     local scripting =
         require(path.getabsolute(packages) .. '/scripting_workspace/premake5_scripting_workspace')
     luau = scripting.luau
@@ -122,6 +140,13 @@ do
                 'miniaudio',
                 'brotli',
             })
+            if withWasmVm then
+                links({ 'wamr' })
+            end
+            if RIVE_RASC_WASM and not RIVE_RASC_NO_BINARYEN then
+                -- The bake's post pass runs binaryen in process.
+                links({ 'binaryen' })
+            end
             filter({ 'options:not no_rive_png' })
             do
                 links({ 'zlib', 'libpng' })
@@ -165,6 +190,7 @@ do
                     'brotli',
                     'rive_pathops',
                     'rml',
+                    'rive_codec',
                 })
             end
             filter({})
@@ -173,7 +199,7 @@ do
             kind('StaticLib')
             filter({ 'options:not flutter_runtime' })
             do
-                dependson({ 'spirv_cross', 'rive_pathops', 'rml' })
+                dependson({ 'spirv_cross', 'rive_pathops', 'rml', 'rive_codec' })
             end
             filter({})
         end
@@ -215,6 +241,7 @@ do
                 'brotli',
                 'rive_pathops',
                 'rml',
+                'rive_codec',
             })
         end
         filter({})
@@ -258,6 +285,15 @@ do
             '-fno-rtti',
             '-O3',
         })
+        if withWasmBackend then
+            -- Script modules run on the browser's wasm engine; this is the
+            -- page side of that, generated in the runtime.
+            linkoptions({
+                '--pre-js ' .. path.getabsolute(
+                    '../../runtime/src/wasm/web/rive_scripting_pre.js'
+                ),
+            })
+        end
         buildoptions({
             '-s STRICT=1',
             '-s DISABLE_EXCEPTION_CATCHING=1',
@@ -289,15 +325,27 @@ do
     filter({ 'options:not flutter_runtime' })
     do
         files({
-            'src/rive_luau_binding.cpp',
-            'src/rive_luau_binding_gpu.cpp',
             'src/pathops_binding.cpp',
             'src/rml_binding.cpp',
         })
+        if scriptingVm ~= 'wasm' then
+            files({
+                'src/rive_luau_binding.cpp',
+                'src/rive_luau_binding_gpu.cpp',
+            })
+        end
+        if withWasmBackend then
+            files({ 'src/rive_wasm_binding.cpp' })
+        end
+        -- The workspace bindings compile here and hand out its std.
+        if RIVE_RASC_BUNDLE_STD then
+            defines({ 'WITH_RASC_STD_BUNDLE' })
+        end
         includedirs({
             packages .. '/pathops/include',
             packages .. '/rml/include',
             packages .. '/rml',
+            packages .. '/rive_codec/include',
         })
     end
     -- The Luau-free deferred session/consumer plumbing ships in the runtime

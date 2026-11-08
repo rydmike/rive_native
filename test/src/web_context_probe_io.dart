@@ -13,3 +13,6 @@ int get debugWebRenderTexturePoolCap =>
 
 Future<void> awaitWebGLHeadroom() =>
     throw UnsupportedError('awaitWebGLHeadroom is web-only');
+
+int deferredSessionOpenTargets(int sessionAddress) =>
+    throw UnsupportedError('deferredSessionOpenTargets is web-only');

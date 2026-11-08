@@ -62,6 +62,20 @@ def podref(podname, name):
 
 
 PODS = [
+    # The Text builtin's box settings, one struct so the op stays inside the
+    # argument budget. align 3 and 4 are start and end, direction 0 detects.
+    pod('text_layout_desc', [
+        u32('sizing'),
+        u32('overflow'),
+        u32('align'),
+        u32('wrap'),
+        u32('wordBreak'),
+        u32('origin'),
+        u32('direction'),
+        f32('maxWidth'),
+        f32('maxHeight'),
+        f32('paragraphSpacing'),
+    ]),
     pod('gpu_texture_desc', [
         u32('width'),
         u32('height'),
@@ -103,17 +117,6 @@ PODS = [
         u32('mipCount'),
         u32('baseLayer'),
         u32('layerCount'),
-    ]),
-    # Sizes slice the op's blob argument in field order; absent parts are 0.
-    pod('gpu_shader_module_desc', [
-        u32('language'),
-        u32('stage'),
-        u32('codeSize'),
-        u32('hlslSourceSize'),
-        u32('hlslEntryPointSize'),
-        u32('bindingMapSize'),
-        u32('glFixupSize'),
-        u32('shaderAssetId'),
     ]),
     # Array element pods cross via buf() with a byte count; the count must be
     # an exact multiple of the struct size.
@@ -185,6 +188,7 @@ PODS = [
         u32('stencilLoadOp'),
         u32('stencilStoreOp'),
         u32('stencilClearValue'),
+        u32('labelSize'),
     ]),
     # Sizes and counts slice the op's blob in field order: vertex entry
     # string, fragment entry string, color targets, vertex buffer layouts,
@@ -224,11 +228,17 @@ PODS = [
 ]
 
 
-def op(name, params=(), ret=None, stub=None, guard=None):
+def op(name, params=(), ret=None, stub=None, guard=None, boot=None,
+       web_js=None):
     # guard: the host only carries the op when this macro is defined. Modules
     # import what they call, so one that never calls it links anywhere.
+    # boot: the op traps and module start can reach it, before the exec env
+    # carries the vm, so the WAMR wrapper resolves the booting one. With no
+    # vm at all it traps with this text.
+    # web_js: the page answers the op itself; the expression goes straight
+    # into the web import object, so the call never enters librive.
     return {'name': name, 'params': list(params), 'ret': ret, 'stub': stub,
-            'guard': guard}
+            'guard': guard, 'boot': boot, 'web_js': web_js}
 
 
 def ns(module, short, ops):
@@ -241,7 +251,14 @@ NAMESPACES = [
         op('mark_needs_update', [handle('object')]),
         # Raised by the module's fuel checks when the execution budget
         # passes; the host prints the timeout and traps the op.
-        op('budget_exceeded', [u32('ms')]),
+        op('budget_exceeded', [u32('ms')], boot='execution exceeded timeout'),
+        # A script's throw hands over its message just before it traps, so
+        # the trap reports what was thrown.
+        op('error', [string('message', 'length')], boot='script threw'),
+        # Milliseconds. now is monotonic and times the execution budget and
+        # os.clock; date_now is the wall clock since the epoch, for os.time.
+        op('now', ret='f64', web_js='performance.now()'),
+        op('date_now', ret='f64', web_js='Date.now()'),
         # Line probes a debug bake plants: function entry and exit keep a
         # shadow call stack, and each line asks whether to stop. line
         # returns nonzero when it did, so the module re-arms its budget.
@@ -316,6 +333,10 @@ NAMESPACES = [
         op('vmi_image', [handle('vmi'), string('name', 'length')], ret='u32'),
         op('vmi_font', [handle('vmi'), string('name', 'length')], ret='u32'),
         op('vmi_blob', [handle('vmi'), string('name', 'length')], ret='u32'),
+        # Artboard properties; 0 on hosts built without fetch() support,
+        # like the Luau lane's getArtboard.
+        op('vmi_artboard', [handle('vmi'), string('name', 'length')],
+           ret='u32'),
         # The property's image as a rive_image_v1 handle, resolved through
         # the instance's embedded asset or the file registry; 0 when none.
         op('image_get', [handle('property')], ret='u32'),
@@ -335,6 +356,13 @@ NAMESPACES = [
         op('blob_set', [handle('property'),
                         buf('uint8_t', 'bytes', 'byteCount')]),
         op('blob_clear', [handle('property')]),
+        # The bindable artboard the property holds, as a rive_file_v1
+        # bindable handle; 0 while it names one of the host file's own
+        # artboards, or none.
+        op('artboard_get', [handle('property')], ret='u32'),
+        # Binds the bindable's own view model instance and then the
+        # artboard, as the Luau lane's setter does; 0 clears both.
+        op('artboard_set', [handle('property'), handle('bindable')]),
         # Same retrying length contract as string_get; the value is the
         # current key resolved through the property's data enum.
         op('enum_get', [handle('property'),
@@ -372,6 +400,9 @@ NAMESPACES = [
         # a larger buffer when truncated.
         op('string_get', [handle('property'),
                           mutbuf('char', 'buffer', 'capacity')], ret='u32'),
+        # ~0 while the value matches the last string_get on this handle,
+        # else its byte length, so a module can keep its copy.
+        op('string_changed', [handle('property')], ret='u32'),
         op('string_set', [handle('property'), string('value', 'length')]),
         # Value change delivery: the host calls the module's exported
         # host_data_value_changed(token) whenever a watched property's value
@@ -417,6 +448,23 @@ NAMESPACES = [
             f32('x'),
             f32('y'),
         ], ret='u32'),
+        # phase is ScrollPhase; returns the HitResult like pointer_event.
+        op('scroll_event', [
+            handle('artboard'),
+            u32('pointerId'),
+            f32('x'),
+            f32('y'),
+            f32('dx'),
+            f32('dy'),
+            u32('phase'),
+            u32('precise'),
+            f32('timeStamp'),
+        ], ret='u32'),
+        # artboard:gamepad*: a GamepadWire payload with its button and axis
+        # floats; returns how many scripted drawables took the event.
+        op('gamepad_event', [handle('artboard'),
+                             buf('uint8_t', 'payload', 'byteCount')],
+           ret='u32'),
         op('animation', [handle('artboard'), string('name', 'length')],
            ret='u32'),
         op('animation_release', [handle('animation')]),
@@ -429,6 +477,10 @@ NAMESPACES = [
             f32('value'),
             u32('mode'),
         ]),
+        # artboard:addToPath: appends the visible shapes into a host path.
+        op('add_to_path', [handle('artboard'), handle('path'), f32('xx'),
+                           f32('xy'), f32('yx'), f32('yy'), f32('tx'),
+                           f32('ty')]),
         op('node', [handle('artboard'), string('name', 'length')], ret='u32'),
         op('node_release', [handle('node')]),
         # x, y, rotation, scaleX, scaleY.
@@ -534,6 +586,15 @@ NAMESPACES = [
             u32('fillRule'),
         ]),
         op('release', [handle('path')]),
+        # Appends other's host geometry through the affine values, so a path
+        # built from many paths never copies points inside the module.
+        op('add', [handle('path'), handle('other'), f32('xx'), f32('xy'),
+                   f32('yx'), f32('yy'), f32('tx'), f32('ty')]),
+        # Host composed geometry read back, size then fill.
+        op('verbs', [handle('path'), mutbuf('uint8_t', 'out', 'outCount')],
+           ret='u32'),
+        op('points', [handle('path'), mutbuf('float', 'out', 'outCount')],
+           ret='u32'),
         # The geometry the script's effect update produced, appended into the
         # RawPath the pending callPathEffectUpdate points at; the inverse of
         # update's module-to-host crossing.
@@ -586,6 +647,10 @@ NAMESPACES = [
         op('blend_mode', [handle('paint'), u32('value')]),
         op('feather', [handle('paint'), f32('value')]),
         op('shader', [handle('paint'), handle('shader')]),
+        op('shader_transform', [
+            handle('paint'),
+            buf('float', 'values', 'floatCount'),
+        ]),
     ]),
     # 2D canvas: an offscreen Rive render target the script draws into with
     # a frame's Renderer and composites with the image it mints. A zero size
@@ -637,10 +702,18 @@ NAMESPACES = [
             u32('height'),
             mutbuf('uint32_t', 'props', 'propCount'),
         ], ret='u32'),
+        # A view over the host render target, which renders under Rive's
+        # content; props mirror canvas_color_view. Returns current while it
+        # still names the target, 0 when the host exposes none.
+        op('target_view', [
+            u32('current'),
+            mutbuf('uint32_t', 'props', 'propCount'),
+        ], ret='u32'),
+        # The blob is colorCount color attachments, then labelSize bytes of
+        # label.
         op('pass_begin', [
             podref('gpu_pass_desc', 'desc'),
-            buf('rive_gpu_pass_color_attachment_v1', 'colors',
-                'colorByteCount'),
+            buf('uint8_t', 'blob', 'blobCount'),
         ], ret='u32'),
         op('pass_set_pipeline', [handle('pass'), handle('pipeline')]),
         op('pass_set_vertex_buffer', [
@@ -740,23 +813,34 @@ NAMESPACES = [
         # Which RSTB variant the replay backend consumes; the module mirrors
         # it so entry selection matches the host.
         op('shader_target', ret='u32'),
-        # Copies the named ShaderAsset's RSTB container; returns the full
-        # length for the retrying copy-out convention, 0 when absent.
+        # Copies the named ShaderAsset's RSTB container, which modules read
+        # only for its entry table; returns the full length for the retrying
+        # copy-out convention, 0 when absent.
         op('shader_asset_bytes', [
             handle('object'),
             string('name', 'nameLength'),
             mutbuf('uint8_t', 'out', 'outCount'),
         ], ret='u32'),
-        # The asset's core id; re-decoded module-side assets lose it, and it
-        # rides the recorded shader module descriptor.
+        # The asset's core id; re-decoded module-side assets lose it.
         op('shader_asset_id', [
             handle('object'),
             string('name', 'nameLength'),
         ], ret='u32'),
-        op('shader_module_new', [
-            podref('gpu_shader_module_desc', 'desc'),
-            buf('uint8_t', 'blob', 'blobCount'),
+        # The host builds the module from the named ShaderAsset, so no
+        # module bytes reach a shader compiler. entry indexes the asset's
+        # entry container; a whole module target's module serves them all.
+        op('shader_module_from_asset', [
+            handle('object'),
+            string('name', 'nameLength'),
+            u32('entry'),
         ], ret='u32'),
+        # The same from RSTB bytes the script supplies, which skip the shader
+        # signature check, so only edit time hosts link it.
+        op('shader_module_from_rstb', [
+            buf('uint8_t', 'rstb', 'rstbCount'),
+            u32('assetId'),
+            u32('entry'),
+        ], ret='u32', guard='WITH_RIVE_TOOLS'),
         op('shader_module_release', [handle('shaderModule')]),
         op('bind_group_layout_new', [
             u32('groupIndex'),
@@ -770,6 +854,23 @@ NAMESPACES = [
             handle('shaderModule'),
             u32('groupIndex'),
             buf('uint32_t', 'dynamicUBOs', 'dynamicUBOCount'),
+        ], ret='u32'),
+        # The same over a pipeline whose stages live in two modules, so the
+        # group covers what either stage binds.
+        op('bind_group_layout_from_shaders', [
+            handle('vertexModule'),
+            handle('fragmentModule'),
+            u32('groupIndex'),
+            buf('uint32_t', 'dynamicUBOs', 'dynamicUBOCount'),
+        ], ret='u32'),
+        # A group's layout narrowed to what a pipeline's entry points bind, as
+        # WebGPU's layout 'auto' derives it; 0 when they bind nothing there.
+        op('bind_group_layout_from_entries', [
+            handle('vertexModule'),
+            string('vertexEntry', 'vertexEntryLength'),
+            handle('fragmentModule'),
+            string('fragmentEntry', 'fragmentEntryLength'),
+            u32('groupIndex'),
         ], ret='u32'),
         op('bind_group_new', [
             handle('layout'),
@@ -785,6 +886,18 @@ NAMESPACES = [
             buf('uint8_t', 'blob', 'blobCount'),
         ], ret='u32'),
         op('pipeline_release', [handle('pipeline')]),
+    ]),
+    # Column major 4x4 products the interpreter lanes would otherwise run
+    # op by op; out may alias an input.
+    ns('rive_mat4_v1', 'mat4', [
+        # 64 byte column-major matrices as byte buffers, so WAMR bounds
+        # checks all of each, even while the module is starting.
+        op('multiply', [mutbuf('uint8_t', 'out', 'outBytes'),
+                        buf('uint8_t', 'a', 'aBytes'),
+                        buf('uint8_t', 'b', 'bBytes')]),
+        op('invert', [mutbuf('uint8_t', 'out', 'outBytes'),
+                      buf('uint8_t', 'src', 'srcBytes')],
+           ret='u32', stub='zero'),
     ]),
     ns('rive_buffer_v1', 'buffer', [
         # type and flags are the RenderBufferType/RenderBufferFlags enums.
@@ -834,6 +947,71 @@ NAMESPACES = [
            ret='u32', stub='hook'),
         op('decode_cancel', [u32('token')]),
     ]),
+    # The Luau Font builtin: metrics, variable instances and glyph outlines.
+    ns('rive_font_v1', 'font', [
+        op('from_asset', [handle('object'), string('name', 'length')],
+           ret='u32'),
+        op('decode', [buf('uint8_t', 'bytes', 'byteCount')], ret='u32', guard='WITH_RIVE_TEXT'),
+        op('release', [handle('font')]),
+        # ascent, descent, capHeight, xHeight for a 1 point font.
+        op('metrics', [handle('font'), mutbuf('float', 'out', 'outCount')]),
+        op('weight', [handle('font')], ret='u32'),
+        op('is_italic', [handle('font')], ret='u32'),
+        op('axis_count', [handle('font')], ret='u32'),
+        # tag bits, min, default, max
+        op('axis', [handle('font'), u32('index'),
+                    mutbuf('float', 'out', 'outCount')]),
+        op('axis_value', [handle('font'), u32('tag')], ret='f32'),
+        # Feature tags; returns the count whatever the capacity.
+        op('features', [handle('font'),
+                        mutbuf('uint32_t', 'out', 'outCount')], ret='u32'),
+        op('has_glyph', [handle('font'), u32('codepoint')], ret='u32'),
+        # Axis coords and features as (tag, value bits) pairs.
+        op('with_options', [handle('font'),
+                            buf('uint32_t', 'coords', 'coordCount'),
+                            buf('uint32_t', 'features', 'featureCount')],
+           ret='u32'),
+        # A glyph outline wound for a clockwise fill, size then fill.
+        op('glyph_verbs', [handle('font'), u32('glyph'),
+                           mutbuf('uint8_t', 'out', 'outCount')], ret='u32',
+           guard='WITH_RIVE_TEXT'),
+        op('glyph_points', [handle('font'), u32('glyph'),
+                            mutbuf('float', 'out', 'outCount')], ret='u32',
+           guard='WITH_RIVE_TEXT'),
+    ]),
+    # The Luau Text builtin: styled runs laid out by the runtime shaper, drawn
+    # whole or read back as lines of glyphs in visual order.
+    ns('rive_text_v1', 'text', [
+        op('new', ret='u32', guard='WITH_RIVE_TEXT'),
+        op('release', [handle('text')], guard='WITH_RIVE_TEXT'),
+        # paint 0 draws nothing for the run unless draw is given a paint.
+        op('append', [handle('text'), string('chars', 'length'),
+                      handle('font'), handle('paint'), f32('size'),
+                      f32('lineHeight'), f32('letterSpacing'),
+                      u32('foreground')], guard='WITH_RIVE_TEXT'),
+        op('clear', [handle('text')], guard='WITH_RIVE_TEXT'),
+        op('layout', [handle('text'), podref('text_layout_desc', 'desc')], guard='WITH_RIVE_TEXT'),
+        op('draw', [handle('text'), handle('renderer'), handle('paint')], guard='WITH_RIVE_TEXT'),
+        # minX, minY, maxX, maxY
+        op('bounds', [handle('text'), mutbuf('float', 'out', 'outCount')], guard='WITH_RIVE_TEXT'),
+        op('length', [handle('text')], ret='u32', guard='WITH_RIVE_TEXT'),
+        # Flat four byte word records, size then fill; text.as names the
+        # words. Glyphs come line by line in visual order.
+        op('lines', [handle('text'), mutbuf('uint32_t', 'out', 'outCount')],
+           ret='u32', guard='WITH_RIVE_TEXT'),
+        op('runs', [handle('text'), mutbuf('uint32_t', 'out', 'outCount')],
+           ret='u32', guard='WITH_RIVE_TEXT'),
+        op('glyphs', [handle('text'), mutbuf('uint32_t', 'out', 'outCount')],
+           ret='u32', guard='WITH_RIVE_TEXT'),
+        op('hit_test', [handle('text'), f32('x'), f32('y')], ret='u32', guard='WITH_RIVE_TEXT'),
+        # x, top, bottom; returns 0 when the text has no layout.
+        op('caret', [handle('text'), u32('index'),
+                     mutbuf('float', 'out', 'outCount')], ret='u32', guard='WITH_RIVE_TEXT'),
+        # minX, minY, maxX, maxY per rect; returns the float count.
+        op('selection_rects', [handle('text'), u32('from'), u32('to'),
+                               mutbuf('float', 'out', 'outCount')],
+           ret='u32', guard='WITH_RIVE_TEXT'),
+    ]),
     ns('rive_shader_v1', 'shader', [
         op('linear', [
             f32('sx'),
@@ -853,6 +1031,20 @@ NAMESPACES = [
             u32('count'),
         ], ret='u32'),
         op('release', [handle('shader')]),
+    ]),
+    # Tests suites' blob(name): the full byte count, size then fill, 0 when
+    # the blob is missing or empty; outside test runs every blob is missing.
+    ns('rive_test_v1', 'test', [
+        op('blob', [string('name', 'nameLength'),
+                    mutbuf('uint8_t', 'out', 'outCount')], ret='u32',
+           stub='zero'),
+    ]),
+    # The children a Transition's changed and draw receive, valid for that
+    # call only.
+    ns('rive_transition_v1', 'transition', [
+        op('child_draw', [handle('child'), handle('renderer')]),
+        op('child_width', [handle('child')], ret='f32'),
+        op('child_height', [handle('child')], ret='f32'),
     ]),
     ns('rive_renderer_v1', 'renderer', [
         op('save', [handle('renderer')]),
@@ -910,4 +1102,86 @@ NAMESPACES = [
             handle('instances'),
         ]),
     ]),
+    # fetch(): the host runs NetPolicy, the limits and the transport. The
+    # request is a NetWire stream; the outcome lands on a later advance
+    # through the module's host_fetch_resolved / host_fetch_failed exports,
+    # keyed by the module-issued token. fetch returns 0 when the host was
+    # built without fetch() support and nothing will ever settle, or when
+    # the token is already in flight.
+    ns('rive_net_v1', 'net', [
+        op('fetch', [buf('uint8_t', 'request', 'requestCount'),
+                     u32('token')], ret='u32'),
+        op('fetch_cancel', [u32('token')]),
+    ]),
+    # context:decodeFile and what it returns: decoded files and their
+    # bindable artboards are host objects behind handles.
+    ns('rive_file_v1', 'file', [
+        # 0 when no file results, with statusOut[0] set to the
+        # FileDecodeWire status saying why.
+        op('decode', [buf('uint8_t', 'bytes', 'byteCount'),
+                      mutbuf('uint32_t', 'statusOut', 'statusCount')],
+           ret='u32'),
+        op('release', [handle('file')]),
+        # The artboard count, then each name by index with the retrying
+        # length contract; names are file data and may hold any character.
+        op('artboard_count', [handle('file')], ret='u32'),
+        op('artboard_name', [handle('file'), u32('index'),
+                             mutbuf('char', 'buffer', 'capacity')],
+           ret='u32'),
+        # The named artboard, or the file's default one when useDefault is
+        # set, with an instance of its own view model; 0 when absent.
+        op('bindable', [handle('file'), string('name', 'nameLength'),
+                        u32('useDefault')], ret='u32'),
+        op('bindable_release', [handle('bindable')]),
+        op('bindable_name', [handle('bindable'),
+                             mutbuf('char', 'buffer', 'capacity')],
+           ret='u32'),
+        # The instance of the artboard's own view model as a rive_data_v1
+        # vmi handle; 0 when the artboard has none.
+        op('bindable_data', [handle('bindable')], ret='u32'),
+        # Both handles carry the same bindable artboard.
+        op('bindable_equal', [handle('a'), handle('b')], ret='u32'),
+    ]),
 ]
+
+# Leaf ops never call back into a module (no listeners, no nested scripts),
+# so the interpreter runs them without a frame of its own. Setters, triggers
+# and list edits notify listeners synchronously and must stay out.
+ALL_OPS = None
+LEAF_OPS = {
+    'rive_data_v1': {
+        'vmi_number', 'vmi_boolean', 'vmi_string', 'vmi_trigger', 'vmi_color',
+        'vmi_view_model', 'vmi_list', 'vmi_enum', 'vmi_image', 'vmi_font',
+        'vmi_blob', 'number_get', 'boolean_get', 'string_get',
+        'string_changed', 'color_get', 'enum_get', 'list_length', 'list_get',
+        'view_model_get',
+    },
+    'rive_artboard_v1': {
+        'width', 'height', 'bounds', 'node_transform', 'node_world_transform',
+    },
+    'rive_gpu_v1': {
+        'pass_set_pipeline', 'pass_set_vertex_buffer', 'pass_set_index_buffer',
+        'pass_set_bind_group', 'pass_set_viewport', 'pass_set_scissor',
+        'pass_set_stencil_reference', 'pass_set_blend_color', 'pass_draw',
+        'pass_draw_indexed', 'buffer_update',
+    },
+    'rive_mat4_v1': ALL_OPS,
+    'rive_path_v1': ALL_OPS,
+    'rive_measure_v1': ALL_OPS,
+    'rive_paint_v1': ALL_OPS,
+    'rive_shader_v1': ALL_OPS,
+    'rive_buffer_v1': ALL_OPS,
+    'rive_renderer_v1': ALL_OPS,
+}
+
+# A misspelled module would silently mark nothing leaf.
+assert set(LEAF_OPS) <= {n['module'] for n in NAMESPACES}, (
+    set(LEAF_OPS) - {n['module'] for n in NAMESPACES})
+
+for _namespace in NAMESPACES:
+    _names = {o['name'] for o in _namespace['ops']}
+    _leaf = LEAF_OPS.get(_namespace['module'], set())
+    _leaf = _names if _leaf is ALL_OPS else _leaf
+    assert _leaf <= _names, (_namespace['module'], _leaf - _names)
+    for _op in _namespace['ops']:
+        _op['leaf'] = _op['name'] in _leaf

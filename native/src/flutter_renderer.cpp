@@ -31,120 +31,123 @@ using namespace rive;
 class DeleteHelper
 {
 public:
-    void processDeletions()
+  void processDeletions()
+  {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    while (!m_work.empty())
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        while (!m_work.empty())
-        {
-            auto work = m_work.front();
-            m_work.pop_front();
-            lock.unlock();
-            work();
-            lock.lock();
-        }
+      auto work = m_work.front();
+      m_work.pop_front();
+      lock.unlock();
+      work();
+      lock.lock();
     }
+  }
 
-    void schedule(std::function<void()> callback)
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_work.push_back(callback);
-    }
+  void schedule(std::function<void()> callback)
+  {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_work.push_back(callback);
+  }
 
-    void clear()
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_work.clear();
-    }
+  void clear()
+  {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_work.clear();
+  }
 
-    void lock() { m_mutex.lock(); }
-    void unlock() { m_mutex.unlock(); }
+  void lock() { m_mutex.lock(); }
+  void unlock() { m_mutex.unlock(); }
 
 private:
-    std::mutex m_mutex;
-    std::deque<std::function<void()>> m_work;
+  std::mutex m_mutex;
+  std::deque<std::function<void()>> m_work;
 };
 
 #endif
 
 enum class FlutterGradientType
 {
-    linear,
-    radial
+  linear,
+  radial
 };
 
 class FlutterGradient : public LITE_RTTI_OVERRIDE(RenderShader, FlutterGradient)
 {
 public:
-    FlutterGradient(FlutterGradientType type,
-                    const ColorInt colors[], // [count]
-                    const float stops[],     // [count]
-                    size_t count) :
-        m_type(type),
-        m_colors(colors, colors + count),
-        m_stops(stops, stops + count)
-    {}
-    FlutterGradientType type() const { return m_type; }
-    const std::vector<ColorInt>& colors() const { return m_colors; }
-    const std::vector<float>& stops() const { return m_stops; }
+  FlutterGradient(
+      FlutterGradientType type,
+      const ColorInt colors[], // [count]
+      const float stops[],     // [count]
+      size_t count)
+      : m_type(type)
+      , m_colors(colors, colors + count)
+      , m_stops(stops, stops + count)
+  {}
+  FlutterGradientType type() const { return m_type; }
+  const std::vector<ColorInt>& colors() const { return m_colors; }
+  const std::vector<float>& stops() const { return m_stops; }
 
 private:
-    FlutterGradientType m_type;
-    std::vector<ColorInt> m_colors;
-    std::vector<float> m_stops;
+  FlutterGradientType m_type;
+  std::vector<ColorInt> m_colors;
+  std::vector<float> m_stops;
 };
 
 class FlutterLinearGradient : public FlutterGradient
 {
 public:
-    FlutterLinearGradient(float sx,
-                          float sy,
-                          float ex,
-                          float ey,
-                          const ColorInt colors[], // [count]
-                          const float stops[],     // [count]
-                          size_t count) :
-        FlutterGradient(FlutterGradientType::linear, colors, stops, count),
-        m_sx(sx),
-        m_sy(sy),
-        m_ex(ex),
-        m_ey(ey)
-    {}
+  FlutterLinearGradient(
+      float sx,
+      float sy,
+      float ex,
+      float ey,
+      const ColorInt colors[], // [count]
+      const float stops[],     // [count]
+      size_t count)
+      : FlutterGradient(FlutterGradientType::linear, colors, stops, count)
+      , m_sx(sx)
+      , m_sy(sy)
+      , m_ex(ex)
+      , m_ey(ey)
+  {}
 
-    float sx() const { return m_sx; }
-    float sy() const { return m_sy; }
-    float ex() const { return m_ex; }
-    float ey() const { return m_ey; }
+  float sx() const { return m_sx; }
+  float sy() const { return m_sy; }
+  float ex() const { return m_ex; }
+  float ey() const { return m_ey; }
 
 private:
-    float m_sx;
-    float m_sy;
-    float m_ex;
-    float m_ey;
+  float m_sx;
+  float m_sy;
+  float m_ex;
+  float m_ey;
 };
 
 class FlutterRadialGradient : public FlutterGradient
 {
 public:
-    FlutterRadialGradient(float cx,
-                          float cy,
-                          float radius,
-                          const ColorInt colors[], // [count]
-                          const float stops[],     // [count]
-                          size_t count) :
-        FlutterGradient(FlutterGradientType::radial, colors, stops, count),
-        m_cx(cx),
-        m_cy(cy),
-        m_radius(radius)
-    {}
+  FlutterRadialGradient(
+      float cx,
+      float cy,
+      float radius,
+      const ColorInt colors[], // [count]
+      const float stops[],     // [count]
+      size_t count)
+      : FlutterGradient(FlutterGradientType::radial, colors, stops, count)
+      , m_cx(cx)
+      , m_cy(cy)
+      , m_radius(radius)
+  {}
 
-    float cx() const { return m_cx; }
-    float cy() const { return m_cy; }
-    float radius() const { return m_radius; }
+  float cx() const { return m_cx; }
+  float cy() const { return m_cy; }
+  float radius() const { return m_radius; }
 
 private:
-    float m_cx;
-    float m_cy;
-    float m_radius;
+  float m_cx;
+  float m_cy;
+  float m_radius;
 };
 
 #if defined(__EMSCRIPTEN__)
@@ -169,10 +172,11 @@ using DeleteRenderer = emscripten::val;
 
 #else
 
-typedef void (*DecodeRenderImage)(RenderImage* image,
-                                  uint64_t id,
-                                  const uint8_t* bytes,
-                                  size_t count);
+typedef void (*DecodeRenderImage)(
+    RenderImage* image,
+    uint64_t id,
+    const uint8_t* bytes,
+    size_t count);
 typedef void (*DeleteRenderImage)(uint64_t image);
 typedef void (*DeleteRenderer)(Renderer* renderer);
 typedef void (*DeleteRenderPath)(uint64_t path);
@@ -180,49 +184,51 @@ typedef void (*DeleteRenderPaint)(uint64_t paint);
 typedef void (*DeleteVertexBuffer)(uint64_t buffer);
 typedef void (*DeleteIndexBuffer)(uint64_t buffer);
 
-typedef void (*FlutterDrawRenderPath)(Renderer*,
-                                      uint64_t path,
-                                      uint64_t paint,
-                                      float opacity);
-typedef void (*FlutterDrawRenderImage)(Renderer*,
-                                       uint64_t,
-                                       uint8_t samplerKey,
-                                       uint8_t blendMode,
-                                       float opacity);
-typedef void (*FlutterDrawMesh)(Renderer*,
-                                uint64_t image,
-                                uint64_t vertices,
-                                uint64_t uvs,
-                                uint64_t indices,
-                                uint32_t vertexCount,
-                                uint32_t indexCount,
-                                uint8_t samplerKey,
-                                uint8_t blendMode,
-                                float opacity);
-typedef void (*FlutterUpdateRenderPath)(uint64_t path,
-                                        Vec2D* points,
-                                        uint8_t* verbs,
-                                        size_t count,
-                                        uint8_t fillRule);
-typedef void (*FlutterUpdateRenderPaint)(uint64_t paint,
-                                         uint8_t* buffer,
-                                         size_t size);
-typedef void (*FlutterUpdateIndexBuffer)(uint64_t id,
-                                         uint16_t* buffer,
-                                         size_t size);
-typedef void (*FlutterUpdateVertexBuffer)(uint64_t id,
-                                          Vec2D* buffer,
-                                          size_t size);
+typedef void (*FlutterDrawRenderPath)(
+    Renderer*,
+    uint64_t path,
+    uint64_t paint,
+    float opacity);
+typedef void (*FlutterDrawRenderImage)(
+    Renderer*,
+    uint64_t,
+    uint8_t samplerKey,
+    uint8_t blendMode,
+    float opacity);
+typedef void (*FlutterDrawMesh)(
+    Renderer*,
+    uint64_t image,
+    uint64_t vertices,
+    uint64_t uvs,
+    uint64_t indices,
+    uint32_t vertexCount,
+    uint32_t indexCount,
+    uint8_t samplerKey,
+    uint8_t blendMode,
+    float opacity);
+typedef void (*FlutterUpdateRenderPath)(
+    uint64_t path,
+    Vec2D* points,
+    const uint8_t* verbs,
+    size_t count,
+    uint8_t fillRule);
+typedef void (
+    *FlutterUpdateRenderPaint)(uint64_t paint, uint8_t* buffer, size_t size);
+typedef void (
+    *FlutterUpdateIndexBuffer)(uint64_t id, uint16_t* buffer, size_t size);
+typedef void (
+    *FlutterUpdateVertexBuffer)(uint64_t id, Vec2D* buffer, size_t size);
 typedef void (*FlutterClipRenderPath)(Renderer*, uint64_t path);
 typedef void (*FlutterSave)(Renderer*);
 typedef void (*FlutterRestore)(Renderer*);
-typedef void (*FlutterTransform)(Renderer*,
-                                 float xx,
-                                 float xy,
-                                 float yx,
-                                 float yy,
-                                 float tx,
-                                 float ty);
+typedef void (*FlutterTransform)(
+    Renderer*,
+    float xx,
+    float xy,
+    float yx,
+    float yy,
+    float tx,
+    float ty);
 
 // DecodeRenderImage g_decodeRenderImage = nullptr;
 // DeleteRenderImage g_deleteRenderImage = nullptr;
@@ -247,30 +253,30 @@ typedef void (*FlutterTransform)(Renderer*,
 class PaintDirt
 {
 public:
-    static const uint32_t style = 1 << 0;
-    static const uint32_t color = 1 << 1;
-    static const uint32_t thickness = 1 << 2;
-    static const uint32_t join = 1 << 3;
-    static const uint32_t cap = 1 << 4;
-    static const uint32_t blendMode = 1 << 5;
-    static const uint32_t linear = 1 << 6;
-    static const uint32_t radial = 1 << 7;
-    static const uint32_t removeGradient = 1 << 8;
+  static const uint32_t style = 1 << 0;
+  static const uint32_t color = 1 << 1;
+  static const uint32_t thickness = 1 << 2;
+  static const uint32_t join = 1 << 3;
+  static const uint32_t cap = 1 << 4;
+  static const uint32_t blendMode = 1 << 5;
+  static const uint32_t linear = 1 << 6;
+  static const uint32_t radial = 1 << 7;
+  static const uint32_t removeGradient = 1 << 8;
 };
 
 static const uint64_t maxId = 9007199254740991; // 2^53-1;
 static uint64_t nextId(uint64_t& next)
 {
-    uint64_t id = next;
-    if (next == maxId)
-    {
-        next = 1;
-    }
-    else
-    {
-        next++;
-    }
-    return id;
+  uint64_t id = next;
+  if (next == maxId)
+  {
+    next = 1;
+  }
+  else
+  {
+    next++;
+  }
+  return id;
 }
 
 static uint64_t nextPaintId = 1;
@@ -285,329 +291,354 @@ class FlutterRenderPaint
 {
 
 public:
-    uint64_t m_id;
-    rcp<FlutterFactory> m_factory;
-    FlutterRenderPaint(FlutterFactory* factory) :
-        m_id(nextId(nextPaintId)), m_factory(safe_ref(factory))
-    {}
+  uint64_t m_id;
+  rcp<FlutterFactory> m_factory;
+  FlutterRenderPaint(FlutterFactory* factory)
+      : m_id(nextId(nextPaintId))
+      , m_factory(safe_ref(factory))
+  {}
 
-    ~FlutterRenderPaint();
+  ~FlutterRenderPaint();
 
-    void style(RenderPaintStyle style) override
+  void style(RenderPaintStyle style) override
+  {
+    if (m_paintStyle == style)
     {
-        if (m_paintStyle == style)
-        {
-            return;
-        }
-        m_paintStyle = style;
-        m_dirty |= PaintDirt::style;
+      return;
+    }
+    m_paintStyle = style;
+    m_dirty |= PaintDirt::style;
+  }
+
+  void color(unsigned int value) override
+  {
+    if (m_color == value)
+    {
+      return;
+    }
+    m_color = value;
+    m_dirty |= PaintDirt::color;
+  }
+
+  void thickness(float value) override
+  {
+    if (m_thickness == value)
+    {
+      return;
+    }
+    m_thickness = value;
+    m_dirty |= PaintDirt::thickness;
+  }
+
+  void join(StrokeJoin value) override
+  {
+    if (m_join == value)
+    {
+      return;
+    }
+    m_join = value;
+    m_dirty |= PaintDirt::join;
+  }
+
+  void cap(StrokeCap value) override
+  {
+    if (m_cap == value)
+    {
+      return;
+    }
+    m_cap = value;
+    m_dirty |= PaintDirt::cap;
+  }
+
+  void blendMode(BlendMode value) override
+  {
+    if (m_blendMode == value)
+    {
+      return;
+    }
+    m_blendMode = value;
+    m_dirty |= PaintDirt::blendMode;
+  }
+
+  void shader(rcp<RenderShader> shader) override
+  {
+    if (m_gradient == shader)
+    {
+      return;
     }
 
-    void color(unsigned int value) override
+    m_gradient = nullptr;
+    if (shader == nullptr)
     {
-        if (m_color == value)
-        {
-            return;
-        }
-        m_color = value;
-        m_dirty |= PaintDirt::color;
+      m_dirty |= PaintDirt::removeGradient;
+      return;
     }
 
-    void thickness(float value) override
+    LITE_RTTI_CAST_OR_RETURN(flutterGradient, FlutterGradient*, shader.get());
+    m_gradient = ref_rcp(flutterGradient);
+
+    bool isRadial = m_gradient->type() == FlutterGradientType::radial;
+    if (isRadial)
     {
-        if (m_thickness == value)
-        {
-            return;
-        }
-        m_thickness = value;
-        m_dirty |= PaintDirt::thickness;
+      m_dirty |= PaintDirt::radial;
+    }
+    else
+    {
+      m_dirty |= PaintDirt::linear;
+    }
+  }
+
+  void shaderTransform(const Mat2D& transform) override
+  {
+    if (m_gradientTransform == transform)
+    {
+      return;
+    }
+    m_gradientTransform = transform;
+    if (m_gradient != nullptr)
+    {
+      // We transmit the transform along with the gradient itself.
+      m_dirty |= m_gradient->type() == FlutterGradientType::radial
+                     ? PaintDirt::radial
+                     : PaintDirt::linear;
+    }
+  }
+
+  void invalidateStroke() override {}
+
+  void update(BinaryWriter& writer)
+  {
+    if (m_dirty == 0)
+    {
+      return;
+    }
+    writer.write((uint16_t)m_dirty);
+
+    if ((m_dirty & PaintDirt::style) != 0)
+    {
+      writer.write((uint8_t)(m_paintStyle == RenderPaintStyle::stroke ? 0 : 1));
+    }
+    if ((m_dirty & PaintDirt::color) != 0)
+    {
+      writer.write((uint32_t)m_color);
+    }
+    if ((m_dirty & PaintDirt::thickness) != 0)
+    {
+      writer.write((float)m_thickness);
+    }
+    if ((m_dirty & PaintDirt::join) != 0)
+    {
+      writer.write((uint8_t)m_join);
+    }
+    if ((m_dirty & PaintDirt::cap) != 0)
+    {
+      writer.write((uint8_t)m_cap);
+    }
+    if ((m_dirty & PaintDirt::blendMode) != 0)
+    {
+      writer.write((uint8_t)m_blendMode);
     }
 
-    void join(StrokeJoin value) override
+    if ((m_dirty & (PaintDirt::linear | PaintDirt::radial)) != 0)
     {
-        if (m_join == value)
-        {
-            return;
-        }
-        m_join = value;
-        m_dirty |= PaintDirt::join;
+      bool isRadial = m_gradient->type() == FlutterGradientType::radial;
+
+      writer.write(m_gradientTransform.xx());
+      writer.write(m_gradientTransform.xy());
+      writer.write(m_gradientTransform.yx());
+      writer.write(m_gradientTransform.yy());
+      writer.write(m_gradientTransform.tx());
+      writer.write(m_gradientTransform.ty());
+
+      uint32_t size = (uint32_t)m_gradient->stops().size();
+      writer.write(size);
+      for (uint32_t i = 0; i < size; i++)
+      {
+        writer.write(m_gradient->stops()[i]);
+        writer.write((uint32_t)m_gradient->colors()[i]);
+      }
+
+      if (isRadial)
+      {
+        auto radial = static_cast<const FlutterRadialGradient*>(
+            m_gradient.get());
+
+        writer.write(radial->cx());
+        writer.write(radial->cy());
+        writer.write(radial->radius());
+      }
+      else
+      {
+        auto linear = static_cast<const FlutterLinearGradient*>(
+            m_gradient.get());
+
+        writer.write(linear->sx());
+        writer.write(linear->sy());
+        writer.write(linear->ex());
+        writer.write(linear->ey());
+      }
     }
 
-    void cap(StrokeCap value) override
-    {
-        if (m_cap == value)
-        {
-            return;
-        }
-        m_cap = value;
-        m_dirty |= PaintDirt::cap;
-    }
+    m_dirty = 0;
+  }
 
-    void blendMode(BlendMode value) override
-    {
-        if (m_blendMode == value)
-        {
-            return;
-        }
-        m_blendMode = value;
-        m_dirty |= PaintDirt::blendMode;
-    }
-
-    void shader(rcp<RenderShader> shader) override
-    {
-        if (m_gradient == shader)
-        {
-            return;
-        }
-
-        m_gradient = nullptr;
-        if (shader == nullptr)
-        {
-            m_dirty |= PaintDirt::removeGradient;
-            return;
-        }
-
-        LITE_RTTI_CAST_OR_RETURN(flutterGradient,
-                                 FlutterGradient*,
-                                 shader.get());
-        m_gradient = ref_rcp(flutterGradient);
-
-        bool isRadial = m_gradient->type() == FlutterGradientType::radial;
-        if (isRadial)
-        {
-            m_dirty |= PaintDirt::radial;
-        }
-        else
-        {
-            m_dirty |= PaintDirt::linear;
-        }
-    }
-
-    void invalidateStroke() override {}
-
-    void update(BinaryWriter& writer)
-    {
-        if (m_dirty == 0)
-        {
-            return;
-        }
-        writer.write((uint16_t)m_dirty);
-
-        if ((m_dirty & PaintDirt::style) != 0)
-        {
-            writer.write(
-                (uint8_t)(m_paintStyle == RenderPaintStyle::stroke ? 0 : 1));
-        }
-        if ((m_dirty & PaintDirt::color) != 0)
-        {
-            writer.write((uint32_t)m_color);
-        }
-        if ((m_dirty & PaintDirt::thickness) != 0)
-        {
-            writer.write((float)m_thickness);
-        }
-        if ((m_dirty & PaintDirt::join) != 0)
-        {
-            writer.write((uint8_t)m_join);
-        }
-        if ((m_dirty & PaintDirt::cap) != 0)
-        {
-            writer.write((uint8_t)m_cap);
-        }
-        if ((m_dirty & PaintDirt::blendMode) != 0)
-        {
-            writer.write((uint8_t)m_blendMode);
-        }
-
-        if ((m_dirty & (PaintDirt::linear | PaintDirt::radial)) != 0)
-        {
-            bool isRadial = m_gradient->type() == FlutterGradientType::radial;
-
-            uint32_t size = (uint32_t)m_gradient->stops().size();
-            writer.write(size);
-            for (uint32_t i = 0; i < size; i++)
-            {
-                writer.write(m_gradient->stops()[i]);
-                writer.write((uint32_t)m_gradient->colors()[i]);
-            }
-
-            if (isRadial)
-            {
-                auto radial =
-                    static_cast<const FlutterRadialGradient*>(m_gradient.get());
-
-                writer.write(radial->cx());
-                writer.write(radial->cy());
-                writer.write(radial->radius());
-            }
-            else
-            {
-                auto linear =
-                    static_cast<const FlutterLinearGradient*>(m_gradient.get());
-
-                writer.write(linear->sx());
-                writer.write(linear->sy());
-                writer.write(linear->ex());
-                writer.write(linear->ey());
-            }
-        }
-
-        m_dirty = 0;
-    }
-
-    bool isDirty() const { return m_dirty != 0; }
+  bool isDirty() const { return m_dirty != 0; }
 
 private:
-    float m_thickness = 0.0f;
-    RenderPaintStyle m_paintStyle = RenderPaintStyle::fill;
-    unsigned int m_color = 0x000000ff;
-    uint32_t m_dirty = 0;
-    BlendMode m_blendMode;
-    StrokeJoin m_join = StrokeJoin::bevel;
-    StrokeCap m_cap = StrokeCap::butt;
-    rcp<const FlutterGradient> m_gradient;
+  float m_thickness = 0.0f;
+  RenderPaintStyle m_paintStyle = RenderPaintStyle::fill;
+  unsigned int m_color = 0x000000ff;
+  uint32_t m_dirty = 0;
+  BlendMode m_blendMode;
+  StrokeJoin m_join = StrokeJoin::bevel;
+  StrokeCap m_cap = StrokeCap::butt;
+  rcp<const FlutterGradient> m_gradient;
+  Mat2D m_gradientTransform;
 };
 
 class FlutterRenderPath
     : public LITE_RTTI_OVERRIDE(RenderPath, FlutterRenderPath)
 {
 public:
-    uint64_t m_id;
-    rcp<FlutterFactory> m_factory;
+  uint64_t m_id;
+  rcp<FlutterFactory> m_factory;
 
-    FlutterRenderPath(FillRule fillRule,
-                      RawPath& rawPath,
-                      FlutterFactory* factory) :
-        m_id(nextId(nextPathId)),
-        m_factory(safe_ref(factory)),
-        m_fillRule(fillRule)
+  FlutterRenderPath(
+      FillRule fillRule,
+      RawPath& rawPath,
+      FlutterFactory* factory)
+      : m_id(nextId(nextPathId))
+      , m_factory(safe_ref(factory))
+      , m_fillRule(fillRule)
+  {
+    m_rawPath.swap(rawPath);
+    m_rawPath.pruneEmptySegments();
+    m_isDirty = true;
+  }
+  FlutterRenderPath(FlutterFactory* factory)
+      : m_id(nextId(nextPathId))
+      , m_factory(safe_ref(factory))
+  {}
+
+  ~FlutterRenderPath();
+
+  void update();
+
+  void rewind() override
+  {
+    m_rawPath.reset();
+    m_isDirty = true;
+  }
+
+  void fillRule(FillRule rule) override
+  {
+    m_fillRule = rule;
+    m_isDirty = true;
+  }
+
+  void moveTo(float x, float y) override
+  {
+    m_rawPath.moveTo(x, y);
+    m_isDirty = true;
+  }
+  void lineTo(float x, float y) override
+  {
+    m_rawPath.lineTo(x, y);
+    m_isDirty = true;
+  }
+  void cubicTo(float ox, float oy, float ix, float iy, float x, float y)
+      override
+  {
+    m_rawPath.cubicTo(ox, oy, ix, iy, x, y);
+    m_isDirty = true;
+  }
+  void close() override
+  {
+    m_rawPath.close();
+    m_isDirty = true;
+  }
+
+  void addRenderPath(const RenderPath* path, const Mat2D& matrix) override
+  {
+    LITE_RTTI_CAST_OR_RETURN(flutterPath, const FlutterRenderPath*, path);
+
+    RawPath::Iter transformedPathIter = m_rawPath.addPath(
+        flutterPath->m_rawPath,
+        &matrix);
+    if (matrix != Mat2D())
     {
-        m_rawPath.swap(rawPath);
-        m_rawPath.pruneEmptySegments();
-        m_isDirty = true;
+      // Prune any segments that became empty after the transform.
+      m_rawPath.pruneEmptySegments(transformedPathIter);
     }
-    FlutterRenderPath(FlutterFactory* factory) :
-        m_id(nextId(nextPathId)), m_factory(safe_ref(factory))
-    {}
+    m_isDirty = true;
+  }
 
-    ~FlutterRenderPath();
+  void addRawPath(const RawPath& path) override
+  {
+    m_rawPath.addPath(path, nullptr);
+  }
 
-    void update();
-
-    void rewind() override
-    {
-        m_rawPath.reset();
-        m_isDirty = true;
-    }
-
-    void fillRule(FillRule rule) override
-    {
-        m_fillRule = rule;
-        m_isDirty = true;
-    }
-
-    void moveTo(float x, float y) override
-    {
-        m_rawPath.moveTo(x, y);
-        m_isDirty = true;
-    }
-    void lineTo(float x, float y) override
-    {
-        m_rawPath.lineTo(x, y);
-        m_isDirty = true;
-    }
-    void cubicTo(float ox, float oy, float ix, float iy, float x, float y)
-        override
-    {
-        m_rawPath.cubicTo(ox, oy, ix, iy, x, y);
-        m_isDirty = true;
-    }
-    void close() override
-    {
-        m_rawPath.close();
-        m_isDirty = true;
-    }
-
-    void addRenderPath(const RenderPath* path, const Mat2D& matrix) override
-    {
-        LITE_RTTI_CAST_OR_RETURN(flutterPath, const FlutterRenderPath*, path);
-
-        RawPath::Iter transformedPathIter =
-            m_rawPath.addPath(flutterPath->m_rawPath, &matrix);
-        if (matrix != Mat2D())
-        {
-            // Prune any segments that became empty after the transform.
-            m_rawPath.pruneEmptySegments(transformedPathIter);
-        }
-        m_isDirty = true;
-    }
-
-    void addRawPath(const RawPath& path) override
-    {
-        m_rawPath.addPath(path, nullptr);
-    }
-
-    const RawPath& getRawPath() const { return m_rawPath; }
-    FillRule getFillRule() const { return m_fillRule; }
+  const RawPath& getRawPath() const { return m_rawPath; }
+  FillRule getFillRule() const { return m_fillRule; }
 
 private:
-    FillRule m_fillRule = FillRule::nonZero;
-    RawPath m_rawPath;
-    bool m_isDirty = false;
+  FillRule m_fillRule = FillRule::nonZero;
+  RawPath m_rawPath;
+  bool m_isDirty = false;
 };
 
 static rive::RawPath emptyPath;
-const rive::RawPath& renderPathToRawPath(rive::Factory* factory,
-                                         rive::RenderPath* renderPath)
+const rive::RawPath& renderPathToRawPath(
+    rive::Factory* factory,
+    rive::RenderPath* renderPath)
 {
-    auto riveRenderPath =
-        rive::lite_rtti_cast<rive::RiveRenderPath*>(renderPath);
-    if (riveRenderPath != nullptr)
-    {
-        return riveRenderPath->getRawPath();
-    }
-    auto flutterRenderPath =
-        rive::lite_rtti_cast<FlutterRenderPath*>(renderPath);
-    if (flutterRenderPath != nullptr)
-    {
-        return flutterRenderPath->getRawPath();
-    }
+  auto riveRenderPath = rive::lite_rtti_cast<rive::RiveRenderPath*>(renderPath);
+  if (riveRenderPath != nullptr)
+  {
+    return riveRenderPath->getRawPath();
+  }
+  auto flutterRenderPath = rive::lite_rtti_cast<FlutterRenderPath*>(renderPath);
+  if (flutterRenderPath != nullptr)
+  {
+    return flutterRenderPath->getRawPath();
+  }
 #ifdef WITH_RIVE_PATH_QUERY
-    auto deferredRenderPath =
-        rive::lite_rtti_cast<rive::cmd::DeferredRenderPath*>(renderPath);
-    if (deferredRenderPath != nullptr)
+  auto
+      deferredRenderPath = rive::lite_rtti_cast<rive::cmd::DeferredRenderPath*>(
+          renderPath);
+  if (deferredRenderPath != nullptr)
+  {
+    if (const rive::RawPath* query = deferredRenderPath->queryRawPath())
     {
-        if (const rive::RawPath* query = deferredRenderPath->queryRawPath())
-        {
-            return *query;
-        }
+      return *query;
     }
+  }
 #endif
-    return emptyPath;
+  return emptyPath;
 }
 
-const rive::FillRule renderPathFillRule(rive::Factory* factory,
-                                        rive::RenderPath* renderPath)
+const rive::FillRule renderPathFillRule(
+    rive::Factory* factory,
+    rive::RenderPath* renderPath)
 {
-    auto riveRenderPath =
-        rive::lite_rtti_cast<rive::RiveRenderPath*>(renderPath);
-    if (riveRenderPath != nullptr)
-    {
-        return riveRenderPath->getFillRule();
-    }
-    auto flutterRenderPath =
-        rive::lite_rtti_cast<FlutterRenderPath*>(renderPath);
-    if (flutterRenderPath != nullptr)
-    {
-        return flutterRenderPath->getFillRule();
-    }
-    auto deferredRenderPath =
-        rive::lite_rtti_cast<rive::cmd::DeferredRenderPath*>(renderPath);
-    if (deferredRenderPath != nullptr)
-    {
-        return deferredRenderPath->fillRule();
-    }
-    return rive::FillRule::nonZero;
+  auto riveRenderPath = rive::lite_rtti_cast<rive::RiveRenderPath*>(renderPath);
+  if (riveRenderPath != nullptr)
+  {
+    return riveRenderPath->getFillRule();
+  }
+  auto flutterRenderPath = rive::lite_rtti_cast<FlutterRenderPath*>(renderPath);
+  if (flutterRenderPath != nullptr)
+  {
+    return flutterRenderPath->getFillRule();
+  }
+  auto
+      deferredRenderPath = rive::lite_rtti_cast<rive::cmd::DeferredRenderPath*>(
+          renderPath);
+  if (deferredRenderPath != nullptr)
+  {
+    return deferredRenderPath->fillRule();
+  }
+  return rive::FillRule::nonZero;
 }
 
 class FlutterVertexBuffer
@@ -615,514 +646,526 @@ class FlutterVertexBuffer
 {
 
 public:
-    uint64_t m_id;
-    rcp<FlutterFactory> m_factory;
-    FlutterVertexBuffer(RenderBufferType type,
-                        RenderBufferFlags flags,
-                        size_t sizeInBytes,
-                        FlutterFactory* factory) :
-        lite_rtti_override(type, flags, sizeInBytes),
-        m_id(nextId(nextVertexBufferId)),
-        m_factory(safe_ref(factory)),
-        m_vertices(sizeInBytes / sizeof(Vec2D))
-    {}
+  uint64_t m_id;
+  rcp<FlutterFactory> m_factory;
+  FlutterVertexBuffer(
+      RenderBufferType type,
+      RenderBufferFlags flags,
+      size_t sizeInBytes,
+      FlutterFactory* factory)
+      : lite_rtti_override(type, flags, sizeInBytes)
+      , m_id(nextId(nextVertexBufferId))
+      , m_factory(safe_ref(factory))
+      , m_vertices(sizeInBytes / sizeof(Vec2D))
+  {}
 
-    ~FlutterVertexBuffer();
+  ~FlutterVertexBuffer();
 
-    void* onMap() override { return (void*)m_vertices.data(); }
-    void onUnmap() override { m_isDirty = true; }
+  void* onMap() override { return (void*)m_vertices.data(); }
+  void onUnmap() override { m_isDirty = true; }
 
-    void update();
+  void update();
 
 private:
-    bool m_isDirty = false;
-    std::vector<Vec2D> m_vertices;
+  bool m_isDirty = false;
+  std::vector<Vec2D> m_vertices;
 };
 
 class FlutterIndexBuffer
     : public LITE_RTTI_OVERRIDE(RenderBuffer, FlutterIndexBuffer)
 {
 public:
-    uint64_t m_id;
-    rcp<FlutterFactory> m_factory;
-    FlutterIndexBuffer(RenderBufferType type,
-                       RenderBufferFlags flags,
-                       size_t sizeInBytes,
-                       FlutterFactory* factory) :
-        lite_rtti_override(type, flags, sizeInBytes),
-        m_id(nextId(nextIndexBufferId)),
-        m_factory(safe_ref(factory)),
-        m_indices(sizeInBytes / sizeof(uint16_t))
-    {}
+  uint64_t m_id;
+  rcp<FlutterFactory> m_factory;
+  FlutterIndexBuffer(
+      RenderBufferType type,
+      RenderBufferFlags flags,
+      size_t sizeInBytes,
+      FlutterFactory* factory)
+      : lite_rtti_override(type, flags, sizeInBytes)
+      , m_id(nextId(nextIndexBufferId))
+      , m_factory(safe_ref(factory))
+      , m_indices(sizeInBytes / sizeof(uint16_t))
+  {}
 
-    ~FlutterIndexBuffer();
+  ~FlutterIndexBuffer();
 
-    void* onMap() override { return (void*)m_indices.data(); }
-    void onUnmap() override { m_isDirty = true; }
+  void* onMap() override { return (void*)m_indices.data(); }
+  void onUnmap() override { m_isDirty = true; }
 
-    void update();
+  void update();
 
 private:
-    bool m_isDirty = false;
-    std::vector<uint16_t> m_indices;
+  bool m_isDirty = false;
+  std::vector<uint16_t> m_indices;
 };
 
 class FlutterRenderImage
     : public LITE_RTTI_OVERRIDE(RenderImage, FlutterRenderImage)
 {
 public:
-    uint64_t m_id;
-    rcp<FlutterFactory> m_factory;
-    FlutterRenderImage(FlutterFactory* factory) :
-        m_id(nextId(nextImageId)), m_factory(safe_ref(factory))
-    {}
-    ~FlutterRenderImage();
+  uint64_t m_id;
+  rcp<FlutterFactory> m_factory;
+  FlutterRenderImage(FlutterFactory* factory)
+      : m_id(nextId(nextImageId))
+      , m_factory(safe_ref(factory))
+  {}
+  ~FlutterRenderImage();
 
-    void size(uint32_t width, uint32_t height)
-    {
-        m_Width = width;
-        m_Height = height;
-    }
+  void size(uint32_t width, uint32_t height)
+  {
+    m_Width = width;
+    m_Height = height;
+  }
 };
 
-EXPORT void renderImageSetSize(FlutterRenderImage* renderImage,
-                               uint32_t width,
-                               uint32_t height)
+EXPORT void renderImageSetSize(
+    FlutterRenderImage* renderImage,
+    uint32_t width,
+    uint32_t height)
 {
-    if (renderImage == nullptr)
-    {
-        return;
-    }
-    renderImage->size(width, height);
+  if (renderImage == nullptr)
+  {
+    return;
+  }
+  renderImage->size(width, height);
 }
 
 class FlutterFactory : public RefCnt<FlutterFactory>, public Factory
 {
 public:
 #if !defined(__EMSCRIPTEN__)
-    DeleteHelper g_deleteHelper;
-    void processDeletions() { g_deleteHelper.processDeletions(); }
+  DeleteHelper g_deleteHelper;
+  void processDeletions() { g_deleteHelper.processDeletions(); }
 #endif
-    rcp<RenderBuffer> makeRenderBuffer(RenderBufferType type,
-                                       RenderBufferFlags flags,
-                                       size_t sizeInBytes) override
+  rcp<RenderBuffer> makeRenderBuffer(
+      RenderBufferType type,
+      RenderBufferFlags flags,
+      size_t sizeInBytes) override
+  {
+    switch (type)
     {
-        switch (type)
-        {
-            case RenderBufferType::index:
-                return make_rcp<FlutterIndexBuffer>(type,
-                                                    flags,
-                                                    sizeInBytes,
-                                                    this);
-            case RenderBufferType::vertex:
-                return make_rcp<FlutterVertexBuffer>(type,
-                                                     flags,
-                                                     sizeInBytes,
-                                                     this);
-            default:
-                RIVE_UNREACHABLE();
-        }
+      case RenderBufferType::index:
+        return make_rcp<FlutterIndexBuffer>(type, flags, sizeInBytes, this);
+      case RenderBufferType::vertex:
+        return make_rcp<FlutterVertexBuffer>(type, flags, sizeInBytes, this);
+      default:
+        RIVE_UNREACHABLE();
     }
+  }
 
-    rcp<RenderShader> makeLinearGradient(float sx,
-                                         float sy,
-                                         float ex,
-                                         float ey,
-                                         const ColorInt colors[], // [count]
-                                         const float stops[],     // [count]
-                                         size_t count) override
-    {
-        return rcp(
-            new FlutterLinearGradient(sx, sy, ex, ey, colors, stops, count));
-    }
+  rcp<RenderShader> makeLinearGradient(
+      float sx,
+      float sy,
+      float ex,
+      float ey,
+      const ColorInt colors[], // [count]
+      const float stops[],     // [count]
+      size_t count) override
+  {
+    return rcp(new FlutterLinearGradient(sx, sy, ex, ey, colors, stops, count));
+  }
 
-    rcp<RenderShader> makeRadialGradient(float cx,
-                                         float cy,
-                                         float radius,
-                                         const ColorInt colors[], // [count]
-                                         const float stops[],     // [count]
-                                         size_t count) override
-    {
-        return rcp(
-            new FlutterRadialGradient(cx, cy, radius, colors, stops, count));
-    }
+  rcp<RenderShader> makeRadialGradient(
+      float cx,
+      float cy,
+      float radius,
+      const ColorInt colors[], // [count]
+      const float stops[],     // [count]
+      size_t count) override
+  {
+    return rcp(new FlutterRadialGradient(cx, cy, radius, colors, stops, count));
+  }
 
-    rcp<RenderPath> makeRenderPath(RawPath& path, FillRule rule) override
-    {
-        return make_rcp<FlutterRenderPath>(rule, path, this);
-    }
+  rcp<RenderPath> makeRenderPath(RawPath& path, FillRule rule) override
+  {
+    return make_rcp<FlutterRenderPath>(rule, path, this);
+  }
 
-    rcp<RenderPath> makeEmptyRenderPath() override
-    {
-        return make_rcp<FlutterRenderPath>(this);
-    }
+  rcp<RenderPath> makeEmptyRenderPath() override
+  {
+    return make_rcp<FlutterRenderPath>(this);
+  }
 
-    rcp<RenderPaint> makeRenderPaint() override
-    {
-        return make_rcp<FlutterRenderPaint>(this);
-    }
+  rcp<RenderPaint> makeRenderPaint() override
+  {
+    return make_rcp<FlutterRenderPaint>(this);
+  }
 
-    rcp<RenderImage> decodeImage(Span<const uint8_t> encoded) override
+  rcp<RenderImage> decodeImage(Span<const uint8_t> encoded) override
+  {
+    if (!CALLBACK_VALID(g_decodeRenderImage))
     {
-        if (!CALLBACK_VALID(g_decodeRenderImage))
-        {
-            return nullptr;
-        }
-        auto image = make_rcp<FlutterRenderImage>(this);
-        g_decodeRenderImage(CAST_POINTER image.get(),
-                            image->m_id,
-                            CAST_POINTER encoded.data(),
-                            CAST_SIZE encoded.size());
-        return image;
+      return nullptr;
     }
+    auto image = make_rcp<FlutterRenderImage>(this);
+    g_decodeRenderImage(
+        CAST_POINTER image.get(),
+        image->m_id,
+        CAST_POINTER encoded.data(),
+        CAST_SIZE encoded.size());
+    return image;
+  }
 #if defined(__EMSCRIPTEN__)
-    emscripten::val g_decodeRenderImage = val::null();
-    emscripten::val g_deleteRenderImage = val::null();
-    emscripten::val g_drawRenderPath = val::null();
-    emscripten::val g_drawRenderImage = val::null();
-    emscripten::val g_drawMesh = val::null();
-    emscripten::val g_updateRenderPath = val::null();
-    emscripten::val g_clipRenderPath = val::null();
-    emscripten::val g_save = val::null();
-    emscripten::val g_restore = val::null();
-    emscripten::val g_transform = val::null();
-    emscripten::val g_updateRenderPaint = val::null();
-    emscripten::val g_updateIndexBuffer = val::null();
-    emscripten::val g_updateVertexBuffer = val::null();
-    emscripten::val g_deleteRenderPath = val::null();
-    emscripten::val g_deleteRenderPaint = val::null();
-    emscripten::val g_deleteVertexBuffer = val::null();
-    emscripten::val g_deleteIndexBuffer = val::null();
-    emscripten::val g_deleteRenderer = val::null();
+  emscripten::val g_decodeRenderImage = val::null();
+  emscripten::val g_deleteRenderImage = val::null();
+  emscripten::val g_drawRenderPath = val::null();
+  emscripten::val g_drawRenderImage = val::null();
+  emscripten::val g_drawMesh = val::null();
+  emscripten::val g_updateRenderPath = val::null();
+  emscripten::val g_clipRenderPath = val::null();
+  emscripten::val g_save = val::null();
+  emscripten::val g_restore = val::null();
+  emscripten::val g_transform = val::null();
+  emscripten::val g_updateRenderPaint = val::null();
+  emscripten::val g_updateIndexBuffer = val::null();
+  emscripten::val g_updateVertexBuffer = val::null();
+  emscripten::val g_deleteRenderPath = val::null();
+  emscripten::val g_deleteRenderPaint = val::null();
+  emscripten::val g_deleteVertexBuffer = val::null();
+  emscripten::val g_deleteIndexBuffer = val::null();
+  emscripten::val g_deleteRenderer = val::null();
 #else
-    DecodeRenderImage g_decodeRenderImage = nullptr;
-    DeleteRenderImage g_deleteRenderImage = nullptr;
-    FlutterDrawRenderPath g_drawRenderPath = nullptr;
-    FlutterDrawRenderImage g_drawRenderImage = nullptr;
-    FlutterDrawMesh g_drawMesh = nullptr;
-    FlutterUpdateRenderPath g_updateRenderPath = nullptr;
-    FlutterClipRenderPath g_clipRenderPath = nullptr;
-    FlutterSave g_save = nullptr;
-    FlutterRestore g_restore = nullptr;
-    FlutterTransform g_transform = nullptr;
-    FlutterUpdateRenderPaint g_updateRenderPaint = nullptr;
-    FlutterUpdateIndexBuffer g_updateIndexBuffer = nullptr;
-    FlutterUpdateVertexBuffer g_updateVertexBuffer = nullptr;
-    DeleteRenderPath g_deleteRenderPath = nullptr;
-    DeleteRenderPaint g_deleteRenderPaint = nullptr;
-    DeleteVertexBuffer g_deleteVertexBuffer = nullptr;
-    DeleteIndexBuffer g_deleteIndexBuffer = nullptr;
-    DeleteRenderer g_deleteRenderer = nullptr;
+  DecodeRenderImage g_decodeRenderImage = nullptr;
+  DeleteRenderImage g_deleteRenderImage = nullptr;
+  FlutterDrawRenderPath g_drawRenderPath = nullptr;
+  FlutterDrawRenderImage g_drawRenderImage = nullptr;
+  FlutterDrawMesh g_drawMesh = nullptr;
+  FlutterUpdateRenderPath g_updateRenderPath = nullptr;
+  FlutterClipRenderPath g_clipRenderPath = nullptr;
+  FlutterSave g_save = nullptr;
+  FlutterRestore g_restore = nullptr;
+  FlutterTransform g_transform = nullptr;
+  FlutterUpdateRenderPaint g_updateRenderPaint = nullptr;
+  FlutterUpdateIndexBuffer g_updateIndexBuffer = nullptr;
+  FlutterUpdateVertexBuffer g_updateVertexBuffer = nullptr;
+  DeleteRenderPath g_deleteRenderPath = nullptr;
+  DeleteRenderPaint g_deleteRenderPaint = nullptr;
+  DeleteVertexBuffer g_deleteVertexBuffer = nullptr;
+  DeleteIndexBuffer g_deleteIndexBuffer = nullptr;
+  DeleteRenderer g_deleteRenderer = nullptr;
 #endif
 };
 
 #if !defined(__EMSCRIPTEN__)
 EXPORT void processScheduledDeletions(FlutterFactory* factory)
 {
-    factory->processDeletions();
+  factory->processDeletions();
 }
 #endif
 
 FlutterIndexBuffer::~FlutterIndexBuffer()
 {
 #if defined(__EMSCRIPTEN__)
-    if (CALLBACK_VALID(m_factory->g_deleteIndexBuffer))
-    {
-        m_factory->g_deleteIndexBuffer(m_id);
-    }
+  if (CALLBACK_VALID(m_factory->g_deleteIndexBuffer))
+  {
+    m_factory->g_deleteIndexBuffer(m_id);
+  }
 #else
-    auto obj = m_id;
-    auto factory = m_factory;
-    factory->g_deleteHelper.schedule([factory, obj]() {
-        if (CALLBACK_VALID(factory->g_deleteIndexBuffer))
-        {
-            factory->g_deleteIndexBuffer(obj);
-        }
-    });
+  auto obj = m_id;
+  auto factory = m_factory;
+  factory->g_deleteHelper.schedule([factory, obj]() {
+    if (CALLBACK_VALID(factory->g_deleteIndexBuffer))
+    {
+      factory->g_deleteIndexBuffer(obj);
+    }
+  });
 #endif
 }
 
 FlutterRenderImage::~FlutterRenderImage()
 {
 #if defined(__EMSCRIPTEN__)
-    if (CALLBACK_VALID(m_factory->g_deleteRenderImage))
-    {
-        m_factory->g_deleteRenderImage(m_id);
-    }
+  if (CALLBACK_VALID(m_factory->g_deleteRenderImage))
+  {
+    m_factory->g_deleteRenderImage(m_id);
+  }
 #else
-    // Let Flutter know this id is gone.
-    auto obj = m_id;
-    auto factory = m_factory;
-    factory->g_deleteHelper.schedule([factory, obj]() {
-        if (CALLBACK_VALID(factory->g_deleteRenderImage))
-        {
-            factory->g_deleteRenderImage(obj);
-        }
-    });
+  // Let Flutter know this id is gone.
+  auto obj = m_id;
+  auto factory = m_factory;
+  factory->g_deleteHelper.schedule([factory, obj]() {
+    if (CALLBACK_VALID(factory->g_deleteRenderImage))
+    {
+      factory->g_deleteRenderImage(obj);
+    }
+  });
 #endif
 }
 
 void FlutterIndexBuffer::update()
 {
-    if (!m_isDirty)
-    {
-        return;
-    }
-    m_factory->g_updateIndexBuffer(m_id,
-                                   CAST_POINTER m_indices.data(),
-                                   CAST_SIZE m_indices.size());
-    m_isDirty = false;
+  if (!m_isDirty)
+  {
+    return;
+  }
+  m_factory->g_updateIndexBuffer(
+      m_id,
+      CAST_POINTER m_indices.data(),
+      CAST_SIZE m_indices.size());
+  m_isDirty = false;
 }
 
 void FlutterVertexBuffer::update()
 {
-    if (!m_isDirty)
-    {
-        return;
-    }
-    m_factory->g_updateVertexBuffer(m_id,
-                                    CAST_POINTER m_vertices.data(),
-                                    CAST_SIZE m_vertices.size());
-    m_isDirty = false;
+  if (!m_isDirty)
+  {
+    return;
+  }
+  m_factory->g_updateVertexBuffer(
+      m_id,
+      CAST_POINTER m_vertices.data(),
+      CAST_SIZE m_vertices.size());
+  m_isDirty = false;
 }
 
 FlutterVertexBuffer::~FlutterVertexBuffer()
 {
 #if defined(__EMSCRIPTEN__)
-    if (CALLBACK_VALID(m_factory->g_deleteVertexBuffer))
-    {
-        m_factory->g_deleteVertexBuffer(m_id);
-    }
+  if (CALLBACK_VALID(m_factory->g_deleteVertexBuffer))
+  {
+    m_factory->g_deleteVertexBuffer(m_id);
+  }
 #else
-    auto obj = m_id;
-    auto factory = m_factory;
-    factory->g_deleteHelper.schedule([factory, obj]() {
-        if (CALLBACK_VALID(factory->g_deleteVertexBuffer))
-        {
-            factory->g_deleteVertexBuffer(obj);
-        }
-    });
+  auto obj = m_id;
+  auto factory = m_factory;
+  factory->g_deleteHelper.schedule([factory, obj]() {
+    if (CALLBACK_VALID(factory->g_deleteVertexBuffer))
+    {
+      factory->g_deleteVertexBuffer(obj);
+    }
+  });
 #endif
 }
 
 FlutterRenderPath::~FlutterRenderPath()
 {
 #if defined(__EMSCRIPTEN__)
-    if (CALLBACK_VALID(m_factory->g_deleteRenderPath))
-    {
-        m_factory->g_deleteRenderPath(m_id);
-    }
+  if (CALLBACK_VALID(m_factory->g_deleteRenderPath))
+  {
+    m_factory->g_deleteRenderPath(m_id);
+  }
 #else
-    auto obj = m_id;
-    auto factory = m_factory;
-    factory->g_deleteHelper.schedule([factory, obj]() {
-        if (CALLBACK_VALID(factory->g_deleteRenderPath))
-        {
-            factory->g_deleteRenderPath(obj);
-        }
-    });
+  auto obj = m_id;
+  auto factory = m_factory;
+  factory->g_deleteHelper.schedule([factory, obj]() {
+    if (CALLBACK_VALID(factory->g_deleteRenderPath))
+    {
+      factory->g_deleteRenderPath(obj);
+    }
+  });
 #endif
 }
 
 void FlutterRenderPath::update()
 {
-    if (!m_isDirty || !CALLBACK_VALID(m_factory->g_updateRenderPath))
-    {
-        return;
-    }
+  if (!m_isDirty || !CALLBACK_VALID(m_factory->g_updateRenderPath))
+  {
+    return;
+  }
 
-    m_factory->g_updateRenderPath(
-        m_id,
-        CAST_POINTER(Vec2D*) m_rawPath.points().data(),
-        CAST_POINTER(uint8_t*) m_rawPath.verbs().data(),
-        CAST_SIZE m_rawPath.verbs().size(),
-        (uint8_t)m_fillRule);
+  m_factory->g_updateRenderPath(
+      m_id,
+      CAST_POINTER(Vec2D*) m_rawPath.points().data(),
+      CAST_POINTER m_rawPath.verbsU8().data(),
+      CAST_SIZE m_rawPath.verbs().size(),
+      (uint8_t)m_fillRule);
 
-    m_isDirty = false;
+  m_isDirty = false;
 }
 
 FlutterRenderPaint::~FlutterRenderPaint()
 {
 #if defined(__EMSCRIPTEN__)
-    if (CALLBACK_VALID(m_factory->g_deleteRenderPaint))
-    {
-        m_factory->g_deleteRenderPaint(m_id);
-    }
+  if (CALLBACK_VALID(m_factory->g_deleteRenderPaint))
+  {
+    m_factory->g_deleteRenderPaint(m_id);
+  }
 #else
-    auto id = m_id;
-    auto factory = m_factory;
-    factory->g_deleteHelper.schedule([factory, id]() {
-        if (CALLBACK_VALID(factory->g_deleteRenderPaint))
-        {
-            factory->g_deleteRenderPaint(id);
-        }
-    });
+  auto id = m_id;
+  auto factory = m_factory;
+  factory->g_deleteHelper.schedule([factory, id]() {
+    if (CALLBACK_VALID(factory->g_deleteRenderPaint))
+    {
+      factory->g_deleteRenderPaint(id);
+    }
+  });
 #endif
 }
 
 class FlutterRenderer : public Renderer
 {
 public:
-    FlutterRenderer(FlutterFactory* factory) : m_factory(safe_ref(factory)) {}
-    ~FlutterRenderer()
-    {
+  FlutterRenderer(FlutterFactory* factory) : m_factory(safe_ref(factory)) {}
+  ~FlutterRenderer()
+  {
 #if defined(__EMSCRIPTEN__)
-        if (CALLBACK_VALID(m_factory->g_deleteRenderer))
-        {
-            m_factory->g_deleteRenderer(CAST_POINTER this);
-        }
+    if (CALLBACK_VALID(m_factory->g_deleteRenderer))
+    {
+      m_factory->g_deleteRenderer(CAST_POINTER this);
+    }
 #else
-        auto obj = this;
-        auto factory = m_factory;
-        factory->g_deleteHelper.schedule([factory, obj]() {
-            if (CALLBACK_VALID(factory->g_deleteRenderer))
-            {
-                factory->g_deleteRenderer(obj);
-            }
-        });
+    auto obj = this;
+    auto factory = m_factory;
+    factory->g_deleteHelper.schedule([factory, obj]() {
+      if (CALLBACK_VALID(factory->g_deleteRenderer))
+      {
+        factory->g_deleteRenderer(obj);
+      }
+    });
 #endif
-    }
-    void save() override
+  }
+  void save() override
+  {
+    m_opacityStack.push_back(m_opacityStack.back());
+    if (CALLBACK_VALID(m_factory->g_save))
     {
-        m_opacityStack.push_back(m_opacityStack.back());
-        if (CALLBACK_VALID(m_factory->g_save))
-        {
-            m_factory->g_save(CAST_POINTER this);
-        }
+      m_factory->g_save(CAST_POINTER this);
     }
-    void restore() override
+  }
+  void restore() override
+  {
+    if (m_opacityStack.size() > 1)
     {
-        if (m_opacityStack.size() > 1)
-        {
-            m_opacityStack.pop_back();
-        }
-        if (CALLBACK_VALID(m_factory->g_restore))
-        {
-            m_factory->g_restore(CAST_POINTER this);
-        }
+      m_opacityStack.pop_back();
     }
-    void transform(const Mat2D& transform) override
+    if (CALLBACK_VALID(m_factory->g_restore))
     {
-        if (CALLBACK_VALID(m_factory->g_transform))
-        {
-            m_factory->g_transform(CAST_POINTER this,
-                                   transform.xx(),
-                                   transform.xy(),
-                                   transform.yx(),
-                                   transform.yy(),
-                                   transform.tx(),
-                                   transform.ty());
-        }
+      m_factory->g_restore(CAST_POINTER this);
     }
-
-    void modulateOpacity(float opacity) override
+  }
+  void transform(const Mat2D& transform) override
+  {
+    if (CALLBACK_VALID(m_factory->g_transform))
     {
-        m_opacityStack.back() *= opacity;
+      m_factory->g_transform(
+          CAST_POINTER this,
+          transform.xx(),
+          transform.xy(),
+          transform.yx(),
+          transform.yy(),
+          transform.tx(),
+          transform.ty());
     }
+  }
 
-    void drawPath(RenderPath* path, RenderPaint* paint) override
+  void modulateOpacity(float opacity) override
+  {
+    m_opacityStack.back() *= opacity;
+  }
+
+  void drawPath(RenderPath* path, RenderPaint* paint) override
+  {
+    LITE_RTTI_CAST_OR_RETURN(flutterPath, FlutterRenderPath*, path);
+    LITE_RTTI_CAST_OR_RETURN(flutterPaint, FlutterRenderPaint*, paint);
+
+    if (flutterPaint->isDirty())
     {
-        LITE_RTTI_CAST_OR_RETURN(flutterPath, FlutterRenderPath*, path);
-        LITE_RTTI_CAST_OR_RETURN(flutterPaint, FlutterRenderPaint*, paint);
-
-        if (flutterPaint->isDirty())
-        {
-            m_buffer.clear();
-            VectorBinaryWriter writer(&m_buffer);
-            flutterPaint->update(writer);
-            m_factory->g_updateRenderPaint(flutterPaint->m_id,
-                                           CAST_POINTER m_buffer.data(),
-                                           CAST_SIZE m_buffer.size());
-        }
-
-        flutterPath->update();
-        if (CALLBACK_VALID(m_factory->g_drawRenderPath))
-        {
-            m_factory->g_drawRenderPath(CAST_POINTER this,
-                                        flutterPath->m_id,
-                                        flutterPaint->m_id,
-                                        std::max(0.0f, m_opacityStack.back()));
-        }
+      m_buffer.clear();
+      VectorBinaryWriter writer(&m_buffer);
+      flutterPaint->update(writer);
+      m_factory->g_updateRenderPaint(
+          flutterPaint->m_id,
+          CAST_POINTER m_buffer.data(),
+          CAST_SIZE m_buffer.size());
     }
 
-    void clipPath(RenderPath* path) override
+    flutterPath->update();
+    if (CALLBACK_VALID(m_factory->g_drawRenderPath))
     {
-        LITE_RTTI_CAST_OR_RETURN(flutterPath, FlutterRenderPath*, path);
-
-        flutterPath->update();
-        if (CALLBACK_VALID(m_factory->g_clipRenderPath))
-        {
-            m_factory->g_clipRenderPath(CAST_POINTER this, flutterPath->m_id);
-        }
+      m_factory->g_drawRenderPath(
+          CAST_POINTER this,
+          flutterPath->m_id,
+          flutterPaint->m_id,
+          std::max(0.0f, m_opacityStack.back()));
     }
+  }
 
-    void drawImage(const RenderImage* renderImage,
-                   const ImageSampler option,
-                   BlendMode blendMode,
-                   float opacity) override
+  void clipPath(RenderPath* path) override
+  {
+    LITE_RTTI_CAST_OR_RETURN(flutterPath, FlutterRenderPath*, path);
+
+    flutterPath->update();
+    if (CALLBACK_VALID(m_factory->g_clipRenderPath))
     {
-        LITE_RTTI_CAST_OR_RETURN(flutterRenderImage,
-                                 const FlutterRenderImage*,
-                                 renderImage);
-        if (CALLBACK_VALID(m_factory->g_drawRenderImage))
-        {
-            m_factory->g_drawRenderImage(
-                CAST_POINTER this,
-                flutterRenderImage->m_id,
-                option.asKey(),
-                (uint8_t)blendMode,
-                std::max(0.0f, opacity * m_opacityStack.back()));
-        }
+      m_factory->g_clipRenderPath(CAST_POINTER this, flutterPath->m_id);
     }
+  }
 
-    void drawImageMesh(const RenderImage* image,
-                       const ImageSampler option,
-                       rcp<RenderBuffer> vertices_f32,
-                       rcp<RenderBuffer> uvCoords_f32,
-                       rcp<RenderBuffer> indices_u16,
-                       uint32_t vertexCount,
-                       uint32_t indexCount,
-                       BlendMode blendMode,
-                       float opacity) override
+  void drawImage(
+      const RenderImage* renderImage,
+      const ImageSampler option,
+      BlendMode blendMode,
+      float opacity) override
+  {
+    LITE_RTTI_CAST_OR_RETURN(
+        flutterRenderImage,
+        const FlutterRenderImage*,
+        renderImage);
+    if (CALLBACK_VALID(m_factory->g_drawRenderImage))
     {
-        LITE_RTTI_CAST_OR_RETURN(flutterRenderImage,
-                                 const FlutterRenderImage*,
-                                 image);
-        LITE_RTTI_CAST_OR_RETURN(flutterVertexBuffer,
-                                 FlutterVertexBuffer*,
-                                 vertices_f32.get());
-        LITE_RTTI_CAST_OR_RETURN(flutterUVBuffer,
-                                 FlutterVertexBuffer*,
-                                 uvCoords_f32.get());
-        LITE_RTTI_CAST_OR_RETURN(flutterIndexBuffer,
-                                 FlutterIndexBuffer*,
-                                 indices_u16.get());
-
-        flutterVertexBuffer->update();
-        flutterUVBuffer->update();
-        flutterIndexBuffer->update();
-
-        if (CALLBACK_VALID(m_factory->g_drawMesh))
-        {
-            m_factory->g_drawMesh(
-                CAST_POINTER this,
-                flutterRenderImage->m_id,
-                flutterVertexBuffer->m_id,
-                flutterUVBuffer->m_id,
-                flutterIndexBuffer->m_id,
-                vertexCount,
-                indexCount,
-                option.asKey(),
-                (uint8_t)blendMode,
-                std::max(0.0f, opacity * m_opacityStack.back()));
-        }
+      m_factory->g_drawRenderImage(
+          CAST_POINTER this,
+          flutterRenderImage->m_id,
+          option.asKey(),
+          (uint8_t)blendMode,
+          std::max(0.0f, opacity * m_opacityStack.back()));
     }
+  }
 
-    std::vector<float> m_opacityStack{1.0f};
+  void drawImageMesh(
+      const RenderImage* image,
+      const ImageSampler option,
+      rcp<RenderBuffer> vertices_f32,
+      rcp<RenderBuffer> uvCoords_f32,
+      rcp<RenderBuffer> indices_u16,
+      uint32_t vertexCount,
+      uint32_t indexCount,
+      BlendMode blendMode,
+      float opacity) override
+  {
+    LITE_RTTI_CAST_OR_RETURN(
+        flutterRenderImage,
+        const FlutterRenderImage*,
+        image);
+    LITE_RTTI_CAST_OR_RETURN(
+        flutterVertexBuffer,
+        FlutterVertexBuffer*,
+        vertices_f32.get());
+    LITE_RTTI_CAST_OR_RETURN(
+        flutterUVBuffer,
+        FlutterVertexBuffer*,
+        uvCoords_f32.get());
+    LITE_RTTI_CAST_OR_RETURN(
+        flutterIndexBuffer,
+        FlutterIndexBuffer*,
+        indices_u16.get());
 
-    // Buffer for marshaling data.
-    std::vector<uint8_t> m_buffer;
-    rcp<FlutterFactory> m_factory;
+    flutterVertexBuffer->update();
+    flutterUVBuffer->update();
+    flutterIndexBuffer->update();
+
+    if (CALLBACK_VALID(m_factory->g_drawMesh))
+    {
+      m_factory->g_drawMesh(
+          CAST_POINTER this,
+          flutterRenderImage->m_id,
+          flutterVertexBuffer->m_id,
+          flutterUVBuffer->m_id,
+          flutterIndexBuffer->m_id,
+          vertexCount,
+          indexCount,
+          option.asKey(),
+          (uint8_t)blendMode,
+          std::max(0.0f, opacity * m_opacityStack.back()));
+    }
+  }
+
+  std::vector<float> m_opacityStack{1.0f};
+
+  // Buffer for marshaling data.
+  std::vector<uint8_t> m_buffer;
+  rcp<FlutterFactory> m_factory;
 };
 
 /// Factory callbacks to allow native to create and destroy Flutter resources.
@@ -1152,96 +1195,96 @@ EXPORT void initFactoryCallbacks(
     DeleteRenderer deleteRenderer)
 {
 #if defined(__EMSCRIPTEN__)
-    auto factory = (FlutterFactory*)factoryPtr;
+  auto factory = (FlutterFactory*)factoryPtr;
 #endif
 #if !defined(__EMSCRIPTEN__)
-    factory->g_deleteHelper.lock();
+  factory->g_deleteHelper.lock();
 #endif
-    factory->g_decodeRenderImage = decodeRenderImage;
-    factory->g_deleteRenderImage = deleteRenderImage;
-    factory->g_drawRenderPath = drawRenderPath;
-    factory->g_drawRenderImage = drawRenderImage;
-    factory->g_drawMesh = drawMesh;
-    factory->g_updateRenderPath = updateRenderPath;
-    factory->g_clipRenderPath = clipRenderPath;
-    factory->g_save = save;
-    factory->g_restore = restore;
-    factory->g_transform = transform;
-    factory->g_updateRenderPaint = updateRenderPaint;
-    factory->g_updateIndexBuffer = updateIndexBuffer;
-    factory->g_updateVertexBuffer = updateVertexBuffer;
-    factory->g_deleteRenderPath = deleteRenderPath;
-    factory->g_deleteRenderPaint = deleteRenderPaint;
-    factory->g_deleteVertexBuffer = deleteVertexBuffer;
-    factory->g_deleteIndexBuffer = deleteIndexBuffer;
-    factory->g_deleteRenderer = deleteRenderer;
+  factory->g_decodeRenderImage = decodeRenderImage;
+  factory->g_deleteRenderImage = deleteRenderImage;
+  factory->g_drawRenderPath = drawRenderPath;
+  factory->g_drawRenderImage = drawRenderImage;
+  factory->g_drawMesh = drawMesh;
+  factory->g_updateRenderPath = updateRenderPath;
+  factory->g_clipRenderPath = clipRenderPath;
+  factory->g_save = save;
+  factory->g_restore = restore;
+  factory->g_transform = transform;
+  factory->g_updateRenderPaint = updateRenderPaint;
+  factory->g_updateIndexBuffer = updateIndexBuffer;
+  factory->g_updateVertexBuffer = updateVertexBuffer;
+  factory->g_deleteRenderPath = deleteRenderPath;
+  factory->g_deleteRenderPaint = deleteRenderPaint;
+  factory->g_deleteVertexBuffer = deleteVertexBuffer;
+  factory->g_deleteIndexBuffer = deleteIndexBuffer;
+  factory->g_deleteRenderer = deleteRenderer;
 #if !defined(__EMSCRIPTEN__)
-    factory->g_deleteHelper.unlock();
+  factory->g_deleteHelper.unlock();
 #endif
 }
 
 EXPORT rive::RenderImage* makeFlutterRenderImage(FlutterFactory* factory)
 {
-    auto image = make_rcp<FlutterRenderImage>(factory);
-    return image.release();
+  auto image = make_rcp<FlutterRenderImage>(factory);
+  return image.release();
 }
 
 EXPORT uint64_t flutterRenderImageId(FlutterRenderImage* image)
 {
-    if (image == nullptr)
-    {
-        return 0;
-    }
-    return image->m_id;
+  if (image == nullptr)
+  {
+    return 0;
+  }
+  return image->m_id;
 }
 
 EXPORT FlutterRenderer* makeFlutterRenderer(FlutterFactory* factory)
 {
-    if (factory == nullptr)
-    {
-        return nullptr;
-    }
-    return new FlutterRenderer(factory);
+  if (factory == nullptr)
+  {
+    return nullptr;
+  }
+  return new FlutterRenderer(factory);
 }
 
 EXPORT void deleteFlutterRenderer(FlutterRenderer* renderer)
 {
-    delete renderer;
+  delete renderer;
 }
 
 EXPORT FlutterFactory* makeFlutterFactory() { return new FlutterFactory(); }
 
 EXPORT void deleteFlutterFactory(FlutterFactory* factory)
 {
-    // The factory is a singleton in Flutter so it gets nuked during a hot
-    // restart. We want to make sure any pending work tasks don't execute in
-    // Flutter land.
+  // The factory is a singleton in Flutter so it gets nuked during a hot
+  // restart. We want to make sure any pending work tasks don't execute in
+  // Flutter land.
 #if !defined(__EMSCRIPTEN__)
-    factory->g_deleteHelper.clear();
+  factory->g_deleteHelper.clear();
 #endif
-    // RESET_CALLBACK(g_decodeRenderImage);
-    // RESET_CALLBACK(g_deleteRenderImage);
-    // RESET_CALLBACK(g_drawRenderPath);
-    // RESET_CALLBACK(g_drawRenderImage);
-    // RESET_CALLBACK(g_drawMesh);
-    // RESET_CALLBACK(g_updateRenderPath);
-    // RESET_CALLBACK(g_clipRenderPath);
-    // RESET_CALLBACK(g_save);
-    // RESET_CALLBACK(g_restore);
-    // RESET_CALLBACK(g_transform);
-    // RESET_CALLBACK(g_updateRenderPaint);
-    // RESET_CALLBACK(g_updateIndexBuffer);
-    // RESET_CALLBACK(g_updateVertexBuffer);
-    // RESET_CALLBACK(g_deleteRenderPath);
-    // RESET_CALLBACK(g_deleteRenderPaint);
-    // RESET_CALLBACK(g_deleteVertexBuffer);
-    // RESET_CALLBACK(g_deleteIndexBuffer);
-    factory->unref();
+  // RESET_CALLBACK(g_decodeRenderImage);
+  // RESET_CALLBACK(g_deleteRenderImage);
+  // RESET_CALLBACK(g_drawRenderPath);
+  // RESET_CALLBACK(g_drawRenderImage);
+  // RESET_CALLBACK(g_drawMesh);
+  // RESET_CALLBACK(g_updateRenderPath);
+  // RESET_CALLBACK(g_clipRenderPath);
+  // RESET_CALLBACK(g_save);
+  // RESET_CALLBACK(g_restore);
+  // RESET_CALLBACK(g_transform);
+  // RESET_CALLBACK(g_updateRenderPaint);
+  // RESET_CALLBACK(g_updateIndexBuffer);
+  // RESET_CALLBACK(g_updateVertexBuffer);
+  // RESET_CALLBACK(g_deleteRenderPath);
+  // RESET_CALLBACK(g_deleteRenderPaint);
+  // RESET_CALLBACK(g_deleteVertexBuffer);
+  // RESET_CALLBACK(g_deleteIndexBuffer);
+  factory->unref();
 }
 
 #ifdef __EMSCRIPTEN__
 EMSCRIPTEN_BINDINGS(FlutterFactory)
 {
-    function("initFactoryCallbacks", &initFactoryCallbacks);
+  function("initFactoryCallbacks", &initFactoryCallbacks);
 }
 #endif

@@ -7,6 +7,20 @@
 // cores share with the browser lane's generated C shims.
 // clang-format off
 
+typedef struct rive_text_layout_desc_v1
+{
+    uint32_t sizing;
+    uint32_t overflow;
+    uint32_t align;
+    uint32_t wrap;
+    uint32_t wordBreak;
+    uint32_t origin;
+    uint32_t direction;
+    float maxWidth;
+    float maxHeight;
+    float paragraphSpacing;
+} rive_text_layout_desc_v1;
+
 typedef struct rive_gpu_texture_desc_v1
 {
     uint32_t width;
@@ -56,18 +70,6 @@ typedef struct rive_gpu_texture_view_desc_v1
     uint32_t baseLayer;
     uint32_t layerCount;
 } rive_gpu_texture_view_desc_v1;
-
-typedef struct rive_gpu_shader_module_desc_v1
-{
-    uint32_t language;
-    uint32_t stage;
-    uint32_t codeSize;
-    uint32_t hlslSourceSize;
-    uint32_t hlslEntryPointSize;
-    uint32_t bindingMapSize;
-    uint32_t glFixupSize;
-    uint32_t shaderAssetId;
-} rive_gpu_shader_module_desc_v1;
 
 typedef struct rive_gpu_bind_group_layout_entry_v1
 {
@@ -154,6 +156,7 @@ typedef struct rive_gpu_pass_desc_v1
     uint32_t stencilLoadOp;
     uint32_t stencilStoreOp;
     uint32_t stencilClearValue;
+    uint32_t labelSize;
 } rive_gpu_pass_desc_v1;
 
 typedef struct rive_gpu_pipeline_desc_v1
@@ -192,6 +195,9 @@ typedef struct rive_gpu_pipeline_desc_v1
 void rtLogImpl(WasmScriptingVM* vm, int32_t level, const char* message, uint32_t length);
 void rtMarkNeedsUpdateImpl(WasmScriptingVM* vm, uint32_t object);
 void rtBudgetExceededImpl(WasmScriptingVM* vm, uint32_t ms);
+void rtErrorImpl(WasmScriptingVM* vm, const char* message, uint32_t length);
+double rtNowImpl(WasmScriptingVM* vm);
+double rtDateNowImpl(WasmScriptingVM* vm);
 void rtDebugEnterImpl(WasmScriptingVM* vm, uint32_t func, uint32_t line);
 uint32_t rtDebugLineImpl(WasmScriptingVM* vm, uint32_t line);
 void rtDebugLeaveImpl(WasmScriptingVM* vm);
@@ -225,6 +231,7 @@ uint32_t dataVmiEnumImpl(WasmScriptingVM* vm, uint32_t vmi, const char* name, ui
 uint32_t dataVmiImageImpl(WasmScriptingVM* vm, uint32_t vmi, const char* name, uint32_t length);
 uint32_t dataVmiFontImpl(WasmScriptingVM* vm, uint32_t vmi, const char* name, uint32_t length);
 uint32_t dataVmiBlobImpl(WasmScriptingVM* vm, uint32_t vmi, const char* name, uint32_t length);
+uint32_t dataVmiArtboardImpl(WasmScriptingVM* vm, uint32_t vmi, const char* name, uint32_t length);
 uint32_t dataImageGetImpl(WasmScriptingVM* vm, uint32_t property);
 void dataImageSetImpl(WasmScriptingVM* vm, uint32_t property, uint32_t image);
 uint32_t dataFontGetImpl(WasmScriptingVM* vm, uint32_t property);
@@ -235,6 +242,8 @@ uint32_t dataBlobGetImpl(WasmScriptingVM* vm, uint32_t property, uint8_t* buffer
 uint32_t dataBlobNameImpl(WasmScriptingVM* vm, uint32_t property, char* buffer, uint32_t capacity);
 void dataBlobSetImpl(WasmScriptingVM* vm, uint32_t property, const uint8_t* bytes, uint32_t byteCount);
 void dataBlobClearImpl(WasmScriptingVM* vm, uint32_t property);
+uint32_t dataArtboardGetImpl(WasmScriptingVM* vm, uint32_t property);
+void dataArtboardSetImpl(WasmScriptingVM* vm, uint32_t property, uint32_t bindable);
 uint32_t dataEnumGetImpl(WasmScriptingVM* vm, uint32_t property, char* buffer, uint32_t capacity);
 void dataEnumSetImpl(WasmScriptingVM* vm, uint32_t property, const char* value, uint32_t length);
 uint32_t dataEnumValuesImpl(WasmScriptingVM* vm, uint32_t property, char* buffer, uint32_t capacity);
@@ -259,6 +268,7 @@ void dataNumberSetImpl(WasmScriptingVM* vm, uint32_t property, float value);
 uint32_t dataBooleanGetImpl(WasmScriptingVM* vm, uint32_t property);
 void dataBooleanSetImpl(WasmScriptingVM* vm, uint32_t property, uint32_t value);
 uint32_t dataStringGetImpl(WasmScriptingVM* vm, uint32_t property, char* buffer, uint32_t capacity);
+uint32_t dataStringChangedImpl(WasmScriptingVM* vm, uint32_t property);
 void dataStringSetImpl(WasmScriptingVM* vm, uint32_t property, const char* value, uint32_t length);
 void dataWatchImpl(WasmScriptingVM* vm, uint32_t property, uint32_t token);
 void dataUnwatchImpl(WasmScriptingVM* vm, uint32_t property);
@@ -276,11 +286,14 @@ uint32_t artboardFrameOriginImpl(WasmScriptingVM* vm, uint32_t artboard);
 void artboardSetFrameOriginImpl(WasmScriptingVM* vm, uint32_t artboard, uint32_t value);
 void artboardBoundsImpl(WasmScriptingVM* vm, uint32_t artboard, float* out, uint32_t outCount);
 uint32_t artboardPointerEventImpl(WasmScriptingVM* vm, uint32_t artboard, uint32_t kind, uint32_t pointerId, float x, float y);
+uint32_t artboardScrollEventImpl(WasmScriptingVM* vm, uint32_t artboard, uint32_t pointerId, float x, float y, float dx, float dy, uint32_t phase, uint32_t precise, float timeStamp);
+uint32_t artboardGamepadEventImpl(WasmScriptingVM* vm, uint32_t artboard, const uint8_t* payload, uint32_t byteCount);
 uint32_t artboardAnimationImpl(WasmScriptingVM* vm, uint32_t artboard, const char* name, uint32_t length);
 void artboardAnimationReleaseImpl(WasmScriptingVM* vm, uint32_t animation);
 float artboardAnimationDurationImpl(WasmScriptingVM* vm, uint32_t animation);
 uint32_t artboardAnimationAdvanceImpl(WasmScriptingVM* vm, uint32_t animation, float seconds);
 void artboardAnimationSetTimeImpl(WasmScriptingVM* vm, uint32_t animation, float value, uint32_t mode);
+void artboardAddToPathImpl(WasmScriptingVM* vm, uint32_t artboard, uint32_t path, float xx, float xy, float yx, float yy, float tx, float ty);
 uint32_t artboardNodeImpl(WasmScriptingVM* vm, uint32_t artboard, const char* name, uint32_t length);
 void artboardNodeReleaseImpl(WasmScriptingVM* vm, uint32_t node);
 void artboardNodeTransformImpl(WasmScriptingVM* vm, uint32_t node, float* out, uint32_t outCount);
@@ -330,6 +343,9 @@ void audioSoundSetVolumeImpl(WasmScriptingVM* vm, uint32_t sound, float value);
 uint32_t pathNewImpl(WasmScriptingVM* vm);
 void pathUpdateImpl(WasmScriptingVM* vm, uint32_t path, const uint8_t* verbs, uint32_t verbCount, const float* points, uint32_t floatCount, uint32_t fillRule);
 void pathReleaseImpl(WasmScriptingVM* vm, uint32_t path);
+void pathAddImpl(WasmScriptingVM* vm, uint32_t path, uint32_t other, float xx, float xy, float yx, float yy, float tx, float ty);
+uint32_t pathVerbsImpl(WasmScriptingVM* vm, uint32_t path, uint8_t* out, uint32_t outCount);
+uint32_t pathPointsImpl(WasmScriptingVM* vm, uint32_t path, float* out, uint32_t outCount);
 void pathEffectResultImpl(WasmScriptingVM* vm, const uint8_t* verbs, uint32_t verbCount, const float* points, uint32_t floatCount);
 uint32_t measurePathNewImpl(WasmScriptingVM* vm, const uint8_t* verbs, uint32_t verbCount, const float* points, uint32_t floatCount);
 uint32_t measureContoursNewImpl(WasmScriptingVM* vm, const uint8_t* verbs, uint32_t verbCount, const float* points, uint32_t floatCount);
@@ -351,6 +367,7 @@ void paintCapImpl(WasmScriptingVM* vm, uint32_t paint, uint32_t value);
 void paintBlendModeImpl(WasmScriptingVM* vm, uint32_t paint, uint32_t value);
 void paintFeatherImpl(WasmScriptingVM* vm, uint32_t paint, float value);
 void paintShaderImpl(WasmScriptingVM* vm, uint32_t paint, uint32_t shader);
+void paintShaderTransformImpl(WasmScriptingVM* vm, uint32_t paint, const float* values, uint32_t floatCount);
 uint32_t canvasNewImpl(WasmScriptingVM* vm, uint32_t width, uint32_t height);
 void canvasReleaseImpl(WasmScriptingVM* vm, uint32_t canvas);
 uint32_t canvasWidthImpl(WasmScriptingVM* vm, uint32_t canvas);
@@ -365,7 +382,8 @@ void gpuCanvasReleaseImpl(WasmScriptingVM* vm, uint32_t canvas);
 uint32_t gpuCanvasColorViewImpl(WasmScriptingVM* vm, uint32_t canvas, uint32_t* props, uint32_t propCount);
 uint32_t gpuCanvasImageImpl(WasmScriptingVM* vm, uint32_t canvas);
 uint32_t gpuCanvasResizeImpl(WasmScriptingVM* vm, uint32_t canvas, uint32_t width, uint32_t height, uint32_t* props, uint32_t propCount);
-uint32_t gpuPassBeginImpl(WasmScriptingVM* vm, const rive_gpu_pass_desc_v1* desc, uint32_t descByteCount, const rive_gpu_pass_color_attachment_v1* colors, uint32_t colorByteCount);
+uint32_t gpuTargetViewImpl(WasmScriptingVM* vm, uint32_t current, uint32_t* props, uint32_t propCount);
+uint32_t gpuPassBeginImpl(WasmScriptingVM* vm, const rive_gpu_pass_desc_v1* desc, uint32_t descByteCount, const uint8_t* blob, uint32_t blobCount);
 void gpuPassSetPipelineImpl(WasmScriptingVM* vm, uint32_t pass, uint32_t pipeline);
 void gpuPassSetVertexBufferImpl(WasmScriptingVM* vm, uint32_t pass, uint32_t slot, uint32_t buffer, uint32_t offset);
 void gpuPassSetIndexBufferImpl(WasmScriptingVM* vm, uint32_t pass, uint32_t buffer, uint32_t indexFormat, uint32_t offset);
@@ -392,15 +410,22 @@ void gpuTextureViewReleaseImpl(WasmScriptingVM* vm, uint32_t view);
 uint32_t gpuShaderTargetImpl(WasmScriptingVM* vm);
 uint32_t gpuShaderAssetBytesImpl(WasmScriptingVM* vm, uint32_t object, const char* name, uint32_t nameLength, uint8_t* out, uint32_t outCount);
 uint32_t gpuShaderAssetIdImpl(WasmScriptingVM* vm, uint32_t object, const char* name, uint32_t nameLength);
-uint32_t gpuShaderModuleNewImpl(WasmScriptingVM* vm, const rive_gpu_shader_module_desc_v1* desc, uint32_t descByteCount, const uint8_t* blob, uint32_t blobCount);
+uint32_t gpuShaderModuleFromAssetImpl(WasmScriptingVM* vm, uint32_t object, const char* name, uint32_t nameLength, uint32_t entry);
+#ifdef WITH_RIVE_TOOLS
+uint32_t gpuShaderModuleFromRstbImpl(WasmScriptingVM* vm, const uint8_t* rstb, uint32_t rstbCount, uint32_t assetId, uint32_t entry);
+#endif
 void gpuShaderModuleReleaseImpl(WasmScriptingVM* vm, uint32_t shaderModule);
 uint32_t gpuBindGroupLayoutNewImpl(WasmScriptingVM* vm, uint32_t groupIndex, const rive_gpu_bind_group_layout_entry_v1* entries, uint32_t entryByteCount);
 void gpuBindGroupLayoutReleaseImpl(WasmScriptingVM* vm, uint32_t layout);
 uint32_t gpuBindGroupLayoutFromShaderImpl(WasmScriptingVM* vm, uint32_t shaderModule, uint32_t groupIndex, const uint32_t* dynamicUBOs, uint32_t dynamicUBOCount);
+uint32_t gpuBindGroupLayoutFromShadersImpl(WasmScriptingVM* vm, uint32_t vertexModule, uint32_t fragmentModule, uint32_t groupIndex, const uint32_t* dynamicUBOs, uint32_t dynamicUBOCount);
+uint32_t gpuBindGroupLayoutFromEntriesImpl(WasmScriptingVM* vm, uint32_t vertexModule, const char* vertexEntry, uint32_t vertexEntryLength, uint32_t fragmentModule, const char* fragmentEntry, uint32_t fragmentEntryLength, uint32_t groupIndex);
 uint32_t gpuBindGroupNewImpl(WasmScriptingVM* vm, uint32_t layout, const rive_gpu_bind_group_ubo_v1* ubos, uint32_t uboByteCount, const rive_gpu_bind_group_texture_v1* textures, uint32_t textureByteCount, const rive_gpu_bind_group_sampler_v1* samplers, uint32_t samplerByteCount);
 void gpuBindGroupReleaseImpl(WasmScriptingVM* vm, uint32_t bindGroup);
 uint32_t gpuPipelineNewImpl(WasmScriptingVM* vm, const rive_gpu_pipeline_desc_v1* desc, uint32_t descByteCount, const uint8_t* blob, uint32_t blobCount);
 void gpuPipelineReleaseImpl(WasmScriptingVM* vm, uint32_t pipeline);
+void mat4MultiplyImpl(WasmScriptingVM* vm, uint8_t* out, uint32_t outBytes, const uint8_t* a, uint32_t aBytes, const uint8_t* b, uint32_t bBytes);
+uint32_t mat4InvertImpl(WasmScriptingVM* vm, uint8_t* out, uint32_t outBytes, const uint8_t* src, uint32_t srcBytes);
 uint32_t bufferNewImpl(WasmScriptingVM* vm, uint32_t bufferType, uint32_t flags, uint32_t sizeInBytes);
 void bufferUpdateImpl(WasmScriptingVM* vm, uint32_t buffer, const uint8_t* bytes, uint32_t byteCount);
 void bufferReleaseImpl(WasmScriptingVM* vm, uint32_t buffer);
@@ -415,9 +440,75 @@ uint32_t imageHeightImpl(WasmScriptingVM* vm, uint32_t image);
 void imageReleaseImpl(WasmScriptingVM* vm, uint32_t image);
 uint32_t imageDecodeImpl(WasmScriptingVM* vm, const uint8_t* bytes, uint32_t byteCount, uint32_t token);
 void imageDecodeCancelImpl(WasmScriptingVM* vm, uint32_t token);
+uint32_t fontFromAssetImpl(WasmScriptingVM* vm, uint32_t object, const char* name, uint32_t length);
+#ifdef WITH_RIVE_TEXT
+uint32_t fontDecodeImpl(WasmScriptingVM* vm, const uint8_t* bytes, uint32_t byteCount);
+#endif
+void fontReleaseImpl(WasmScriptingVM* vm, uint32_t font);
+void fontMetricsImpl(WasmScriptingVM* vm, uint32_t font, float* out, uint32_t outCount);
+uint32_t fontWeightImpl(WasmScriptingVM* vm, uint32_t font);
+uint32_t fontIsItalicImpl(WasmScriptingVM* vm, uint32_t font);
+uint32_t fontAxisCountImpl(WasmScriptingVM* vm, uint32_t font);
+void fontAxisImpl(WasmScriptingVM* vm, uint32_t font, uint32_t index, float* out, uint32_t outCount);
+float fontAxisValueImpl(WasmScriptingVM* vm, uint32_t font, uint32_t tag);
+uint32_t fontFeaturesImpl(WasmScriptingVM* vm, uint32_t font, uint32_t* out, uint32_t outCount);
+uint32_t fontHasGlyphImpl(WasmScriptingVM* vm, uint32_t font, uint32_t codepoint);
+uint32_t fontWithOptionsImpl(WasmScriptingVM* vm, uint32_t font, const uint32_t* coords, uint32_t coordCount, const uint32_t* features, uint32_t featureCount);
+#ifdef WITH_RIVE_TEXT
+uint32_t fontGlyphVerbsImpl(WasmScriptingVM* vm, uint32_t font, uint32_t glyph, uint8_t* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t fontGlyphPointsImpl(WasmScriptingVM* vm, uint32_t font, uint32_t glyph, float* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textNewImpl(WasmScriptingVM* vm);
+#endif
+#ifdef WITH_RIVE_TEXT
+void textReleaseImpl(WasmScriptingVM* vm, uint32_t text);
+#endif
+#ifdef WITH_RIVE_TEXT
+void textAppendImpl(WasmScriptingVM* vm, uint32_t text, const char* chars, uint32_t length, uint32_t font, uint32_t paint, float size, float lineHeight, float letterSpacing, uint32_t foreground);
+#endif
+#ifdef WITH_RIVE_TEXT
+void textClearImpl(WasmScriptingVM* vm, uint32_t text);
+#endif
+#ifdef WITH_RIVE_TEXT
+void textLayoutImpl(WasmScriptingVM* vm, uint32_t text, const rive_text_layout_desc_v1* desc, uint32_t descByteCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+void textDrawImpl(WasmScriptingVM* vm, uint32_t text, uint32_t renderer, uint32_t paint);
+#endif
+#ifdef WITH_RIVE_TEXT
+void textBoundsImpl(WasmScriptingVM* vm, uint32_t text, float* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textLengthImpl(WasmScriptingVM* vm, uint32_t text);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textLinesImpl(WasmScriptingVM* vm, uint32_t text, uint32_t* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textRunsImpl(WasmScriptingVM* vm, uint32_t text, uint32_t* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textGlyphsImpl(WasmScriptingVM* vm, uint32_t text, uint32_t* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textHitTestImpl(WasmScriptingVM* vm, uint32_t text, float x, float y);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textCaretImpl(WasmScriptingVM* vm, uint32_t text, uint32_t index, float* out, uint32_t outCount);
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textSelectionRectsImpl(WasmScriptingVM* vm, uint32_t text, uint32_t from, uint32_t to, float* out, uint32_t outCount);
+#endif
 uint32_t shaderLinearImpl(WasmScriptingVM* vm, float sx, float sy, float ex, float ey, uint32_t colors, uint32_t stops, uint32_t count);
 uint32_t shaderRadialImpl(WasmScriptingVM* vm, float cx, float cy, float radius, uint32_t colors, uint32_t stops, uint32_t count);
 void shaderReleaseImpl(WasmScriptingVM* vm, uint32_t shader);
+uint32_t testBlobImpl(WasmScriptingVM* vm, const char* name, uint32_t nameLength, uint8_t* out, uint32_t outCount);
+void transitionChildDrawImpl(WasmScriptingVM* vm, uint32_t child, uint32_t renderer);
+float transitionChildWidthImpl(WasmScriptingVM* vm, uint32_t child);
+float transitionChildHeightImpl(WasmScriptingVM* vm, uint32_t child);
 void rendererSaveImpl(WasmScriptingVM* vm, uint32_t renderer);
 void rendererRestoreImpl(WasmScriptingVM* vm, uint32_t renderer);
 void rendererTransformImpl(WasmScriptingVM* vm, uint32_t renderer, float xx, float xy, float yx, float yy, float tx, float ty);
@@ -428,7 +519,19 @@ void rendererModulateColorImpl(WasmScriptingVM* vm, uint32_t renderer, uint32_t 
 void rendererDrawImageImpl(WasmScriptingVM* vm, uint32_t renderer, uint32_t image, uint32_t sampler, uint32_t blend, float opacity);
 void rendererDrawImageMeshImpl(WasmScriptingVM* vm, uint32_t renderer, uint32_t image, uint32_t sampler, uint32_t vertexBuffer, uint32_t uvBuffer, uint32_t indexBuffer, uint32_t blend, float opacity);
 void rendererDrawImageMeshInstancedImpl(WasmScriptingVM* vm, uint32_t renderer, uint32_t image, uint32_t sampler, uint32_t vertexBuffer, uint32_t uvBuffer, uint32_t indexBuffer, uint32_t instances);
+uint32_t netFetchImpl(WasmScriptingVM* vm, const uint8_t* request, uint32_t requestCount, uint32_t token);
+void netFetchCancelImpl(WasmScriptingVM* vm, uint32_t token);
+uint32_t fileDecodeImpl(WasmScriptingVM* vm, const uint8_t* bytes, uint32_t byteCount, uint32_t* statusOut, uint32_t statusCount);
+void fileReleaseImpl(WasmScriptingVM* vm, uint32_t file);
+uint32_t fileArtboardCountImpl(WasmScriptingVM* vm, uint32_t file);
+uint32_t fileArtboardNameImpl(WasmScriptingVM* vm, uint32_t file, uint32_t index, char* buffer, uint32_t capacity);
+uint32_t fileBindableImpl(WasmScriptingVM* vm, uint32_t file, const char* name, uint32_t nameLength, uint32_t useDefault);
+void fileBindableReleaseImpl(WasmScriptingVM* vm, uint32_t bindable);
+uint32_t fileBindableNameImpl(WasmScriptingVM* vm, uint32_t bindable, char* buffer, uint32_t capacity);
+uint32_t fileBindableDataImpl(WasmScriptingVM* vm, uint32_t bindable);
+uint32_t fileBindableEqualImpl(WasmScriptingVM* vm, uint32_t a, uint32_t b);
 
+#ifndef __EMSCRIPTEN__
 void rtLog(wasm_exec_env_t env, int32_t level, const char* message, uint32_t length)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -442,8 +545,34 @@ void rtMarkNeedsUpdate(wasm_exec_env_t env, uint32_t object)
 }
 void rtBudgetExceeded(wasm_exec_env_t env, uint32_t ms)
 {
-    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmScriptingVM* vm = bootVmFromEnv(env);
+    if (vm == nullptr)
+    {
+        wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "execution exceeded timeout");
+        return;
+    }
     rtBudgetExceededImpl(vm, ms);
+}
+void rtError(wasm_exec_env_t env, const char* message, uint32_t length)
+{
+    WasmScriptingVM* vm = bootVmFromEnv(env);
+    if (vm == nullptr)
+    {
+        wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "script threw");
+        return;
+    }
+    WasmStringArg messageUtf8(vm, message, length);
+    rtErrorImpl(vm, messageUtf8.data(), messageUtf8.size());
+}
+double rtNow(wasm_exec_env_t env)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return rtNowImpl(vm);
+}
+double rtDateNow(wasm_exec_env_t env)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return rtDateNowImpl(vm);
 }
 void rtDebugEnter(wasm_exec_env_t env, uint32_t func, uint32_t line)
 {
@@ -631,6 +760,12 @@ uint32_t dataVmiBlob(wasm_exec_env_t env, uint32_t vmi, const char* name, uint32
     WasmStringArg nameUtf8(vm, name, length);
     return dataVmiBlobImpl(vm, vmi, nameUtf8.data(), nameUtf8.size());
 }
+uint32_t dataVmiArtboard(wasm_exec_env_t env, uint32_t vmi, const char* name, uint32_t length)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmStringArg nameUtf8(vm, name, length);
+    return dataVmiArtboardImpl(vm, vmi, nameUtf8.data(), nameUtf8.size());
+}
 uint32_t dataImageGet(wasm_exec_env_t env, uint32_t property)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -680,6 +815,16 @@ void dataBlobClear(wasm_exec_env_t env, uint32_t property)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
     dataBlobClearImpl(vm, property);
+}
+uint32_t dataArtboardGet(wasm_exec_env_t env, uint32_t property)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return dataArtboardGetImpl(vm, property);
+}
+void dataArtboardSet(wasm_exec_env_t env, uint32_t property, uint32_t bindable)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    dataArtboardSetImpl(vm, property, bindable);
 }
 uint32_t dataEnumGet(wasm_exec_env_t env, uint32_t property, char* buffer, uint32_t capacity)
 {
@@ -802,6 +947,11 @@ uint32_t dataStringGet(wasm_exec_env_t env, uint32_t property, char* buffer, uin
     WasmScriptingVM* vm = vmFromEnv(env);
     return dataStringGetImpl(vm, property, buffer, capacity);
 }
+uint32_t dataStringChanged(wasm_exec_env_t env, uint32_t property)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return dataStringChangedImpl(vm, property);
+}
 void dataStringSet(wasm_exec_env_t env, uint32_t property, const char* value, uint32_t length)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -893,6 +1043,16 @@ uint32_t artboardPointerEvent(wasm_exec_env_t env, uint32_t artboard, uint32_t k
     WasmScriptingVM* vm = vmFromEnv(env);
     return artboardPointerEventImpl(vm, artboard, kind, pointerId, x, y);
 }
+uint32_t artboardScrollEvent(wasm_exec_env_t env, uint32_t artboard, uint32_t pointerId, float x, float y, float dx, float dy, uint32_t phase, uint32_t precise, float timeStamp)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return artboardScrollEventImpl(vm, artboard, pointerId, x, y, dx, dy, phase, precise, timeStamp);
+}
+uint32_t artboardGamepadEvent(wasm_exec_env_t env, uint32_t artboard, const uint8_t* payload, uint32_t byteCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return artboardGamepadEventImpl(vm, artboard, payload, byteCount);
+}
 uint32_t artboardAnimation(wasm_exec_env_t env, uint32_t artboard, const char* name, uint32_t length)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -918,6 +1078,11 @@ void artboardAnimationSetTime(wasm_exec_env_t env, uint32_t animation, float val
 {
     WasmScriptingVM* vm = vmFromEnv(env);
     artboardAnimationSetTimeImpl(vm, animation, value, mode);
+}
+void artboardAddToPath(wasm_exec_env_t env, uint32_t artboard, uint32_t path, float xx, float xy, float yx, float yy, float tx, float ty)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    artboardAddToPathImpl(vm, artboard, path, xx, xy, yx, yy, tx, ty);
 }
 uint32_t artboardNode(wasm_exec_env_t env, uint32_t artboard, const char* name, uint32_t length)
 {
@@ -1195,6 +1360,25 @@ void pathRelease(wasm_exec_env_t env, uint32_t path)
     WasmScriptingVM* vm = vmFromEnv(env);
     pathReleaseImpl(vm, path);
 }
+void pathAdd(wasm_exec_env_t env, uint32_t path, uint32_t other, float xx, float xy, float yx, float yy, float tx, float ty)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    pathAddImpl(vm, path, other, xx, xy, yx, yy, tx, ty);
+}
+uint32_t pathVerbs(wasm_exec_env_t env, uint32_t path, uint8_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return pathVerbsImpl(vm, path, out, outCount);
+}
+uint32_t pathPoints(wasm_exec_env_t env, uint32_t path, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return pathPointsImpl(vm, path, out, outCount);
+}
 void pathEffectResult(wasm_exec_env_t env, const uint8_t* verbs, uint32_t verbCount, const float* points, uint32_t floatCount)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -1324,6 +1508,15 @@ void paintShader(wasm_exec_env_t env, uint32_t paint, uint32_t shader)
     WasmScriptingVM* vm = vmFromEnv(env);
     paintShaderImpl(vm, paint, shader);
 }
+void paintShaderTransform(wasm_exec_env_t env, uint32_t paint, const float* values, uint32_t floatCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (floatCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)values, (uint64_t)floatCount * 4))
+    {
+        return;
+    }
+    paintShaderTransformImpl(vm, paint, values, floatCount);
+}
 uint32_t canvasNew(wasm_exec_env_t env, uint32_t width, uint32_t height)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -1406,10 +1599,19 @@ uint32_t gpuCanvasResize(wasm_exec_env_t env, uint32_t canvas, uint32_t width, u
     }
     return gpuCanvasResizeImpl(vm, canvas, width, height, props, propCount);
 }
-uint32_t gpuPassBegin(wasm_exec_env_t env, const rive_gpu_pass_desc_v1* desc, uint32_t descByteCount, const rive_gpu_pass_color_attachment_v1* colors, uint32_t colorByteCount)
+uint32_t gpuTargetView(wasm_exec_env_t env, uint32_t current, uint32_t* props, uint32_t propCount)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
-    return gpuPassBeginImpl(vm, desc, descByteCount, colors, colorByteCount);
+    if (propCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)props, (uint64_t)propCount * 4))
+    {
+        return {};
+    }
+    return gpuTargetViewImpl(vm, current, props, propCount);
+}
+uint32_t gpuPassBegin(wasm_exec_env_t env, const rive_gpu_pass_desc_v1* desc, uint32_t descByteCount, const uint8_t* blob, uint32_t blobCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return gpuPassBeginImpl(vm, desc, descByteCount, blob, blobCount);
 }
 void gpuPassSetPipeline(wasm_exec_env_t env, uint32_t pass, uint32_t pipeline)
 {
@@ -1543,11 +1745,19 @@ uint32_t gpuShaderAssetId(wasm_exec_env_t env, uint32_t object, const char* name
     WasmStringArg nameUtf8(vm, name, nameLength);
     return gpuShaderAssetIdImpl(vm, object, nameUtf8.data(), nameUtf8.size());
 }
-uint32_t gpuShaderModuleNew(wasm_exec_env_t env, const rive_gpu_shader_module_desc_v1* desc, uint32_t descByteCount, const uint8_t* blob, uint32_t blobCount)
+uint32_t gpuShaderModuleFromAsset(wasm_exec_env_t env, uint32_t object, const char* name, uint32_t nameLength, uint32_t entry)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
-    return gpuShaderModuleNewImpl(vm, desc, descByteCount, blob, blobCount);
+    WasmStringArg nameUtf8(vm, name, nameLength);
+    return gpuShaderModuleFromAssetImpl(vm, object, nameUtf8.data(), nameUtf8.size(), entry);
 }
+#ifdef WITH_RIVE_TOOLS
+uint32_t gpuShaderModuleFromRstb(wasm_exec_env_t env, const uint8_t* rstb, uint32_t rstbCount, uint32_t assetId, uint32_t entry)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return gpuShaderModuleFromRstbImpl(vm, rstb, rstbCount, assetId, entry);
+}
+#endif
 void gpuShaderModuleRelease(wasm_exec_env_t env, uint32_t shaderModule)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -1572,6 +1782,22 @@ uint32_t gpuBindGroupLayoutFromShader(wasm_exec_env_t env, uint32_t shaderModule
     }
     return gpuBindGroupLayoutFromShaderImpl(vm, shaderModule, groupIndex, dynamicUBOs, dynamicUBOCount);
 }
+uint32_t gpuBindGroupLayoutFromShaders(wasm_exec_env_t env, uint32_t vertexModule, uint32_t fragmentModule, uint32_t groupIndex, const uint32_t* dynamicUBOs, uint32_t dynamicUBOCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (dynamicUBOCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)dynamicUBOs, (uint64_t)dynamicUBOCount * 4))
+    {
+        return {};
+    }
+    return gpuBindGroupLayoutFromShadersImpl(vm, vertexModule, fragmentModule, groupIndex, dynamicUBOs, dynamicUBOCount);
+}
+uint32_t gpuBindGroupLayoutFromEntries(wasm_exec_env_t env, uint32_t vertexModule, const char* vertexEntry, uint32_t vertexEntryLength, uint32_t fragmentModule, const char* fragmentEntry, uint32_t fragmentEntryLength, uint32_t groupIndex)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmStringArg vertexEntryUtf8(vm, vertexEntry, vertexEntryLength);
+    WasmStringArg fragmentEntryUtf8(vm, fragmentEntry, fragmentEntryLength);
+    return gpuBindGroupLayoutFromEntriesImpl(vm, vertexModule, vertexEntryUtf8.data(), vertexEntryUtf8.size(), fragmentModule, fragmentEntryUtf8.data(), fragmentEntryUtf8.size(), groupIndex);
+}
 uint32_t gpuBindGroupNew(wasm_exec_env_t env, uint32_t layout, const rive_gpu_bind_group_ubo_v1* ubos, uint32_t uboByteCount, const rive_gpu_bind_group_texture_v1* textures, uint32_t textureByteCount, const rive_gpu_bind_group_sampler_v1* samplers, uint32_t samplerByteCount)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -1591,6 +1817,16 @@ void gpuPipelineRelease(wasm_exec_env_t env, uint32_t pipeline)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
     gpuPipelineReleaseImpl(vm, pipeline);
+}
+void mat4Multiply(wasm_exec_env_t env, uint8_t* out, uint32_t outBytes, const uint8_t* a, uint32_t aBytes, const uint8_t* b, uint32_t bBytes)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    mat4MultiplyImpl(vm, out, outBytes, a, aBytes, b, bBytes);
+}
+uint32_t mat4Invert(wasm_exec_env_t env, uint8_t* out, uint32_t outBytes, const uint8_t* src, uint32_t srcBytes)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return mat4InvertImpl(vm, out, outBytes, src, srcBytes);
 }
 uint32_t bufferNew(wasm_exec_env_t env, uint32_t bufferType, uint32_t flags, uint32_t sizeInBytes)
 {
@@ -1664,6 +1900,230 @@ void imageDecodeCancel(wasm_exec_env_t env, uint32_t token)
     WasmScriptingVM* vm = vmFromEnv(env);
     imageDecodeCancelImpl(vm, token);
 }
+uint32_t fontFromAsset(wasm_exec_env_t env, uint32_t object, const char* name, uint32_t length)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmStringArg nameUtf8(vm, name, length);
+    return fontFromAssetImpl(vm, object, nameUtf8.data(), nameUtf8.size());
+}
+#ifdef WITH_RIVE_TEXT
+uint32_t fontDecode(wasm_exec_env_t env, const uint8_t* bytes, uint32_t byteCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontDecodeImpl(vm, bytes, byteCount);
+}
+#endif
+void fontRelease(wasm_exec_env_t env, uint32_t font)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    fontReleaseImpl(vm, font);
+}
+void fontMetrics(wasm_exec_env_t env, uint32_t font, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return;
+    }
+    fontMetricsImpl(vm, font, out, outCount);
+}
+uint32_t fontWeight(wasm_exec_env_t env, uint32_t font)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontWeightImpl(vm, font);
+}
+uint32_t fontIsItalic(wasm_exec_env_t env, uint32_t font)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontIsItalicImpl(vm, font);
+}
+uint32_t fontAxisCount(wasm_exec_env_t env, uint32_t font)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontAxisCountImpl(vm, font);
+}
+void fontAxis(wasm_exec_env_t env, uint32_t font, uint32_t index, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return;
+    }
+    fontAxisImpl(vm, font, index, out, outCount);
+}
+float fontAxisValue(wasm_exec_env_t env, uint32_t font, uint32_t tag)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontAxisValueImpl(vm, font, tag);
+}
+uint32_t fontFeatures(wasm_exec_env_t env, uint32_t font, uint32_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return fontFeaturesImpl(vm, font, out, outCount);
+}
+uint32_t fontHasGlyph(wasm_exec_env_t env, uint32_t font, uint32_t codepoint)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontHasGlyphImpl(vm, font, codepoint);
+}
+uint32_t fontWithOptions(wasm_exec_env_t env, uint32_t font, const uint32_t* coords, uint32_t coordCount, const uint32_t* features, uint32_t featureCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (coordCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)coords, (uint64_t)coordCount * 4))
+    {
+        return {};
+    }
+    if (featureCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)features, (uint64_t)featureCount * 4))
+    {
+        return {};
+    }
+    return fontWithOptionsImpl(vm, font, coords, coordCount, features, featureCount);
+}
+#ifdef WITH_RIVE_TEXT
+uint32_t fontGlyphVerbs(wasm_exec_env_t env, uint32_t font, uint32_t glyph, uint8_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fontGlyphVerbsImpl(vm, font, glyph, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t fontGlyphPoints(wasm_exec_env_t env, uint32_t font, uint32_t glyph, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return fontGlyphPointsImpl(vm, font, glyph, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textNew(wasm_exec_env_t env)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return textNewImpl(vm);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+void textRelease(wasm_exec_env_t env, uint32_t text)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    textReleaseImpl(vm, text);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+void textAppend(wasm_exec_env_t env, uint32_t text, const char* chars, uint32_t length, uint32_t font, uint32_t paint, float size, float lineHeight, float letterSpacing, uint32_t foreground)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmStringArg charsUtf8(vm, chars, length);
+    textAppendImpl(vm, text, charsUtf8.data(), charsUtf8.size(), font, paint, size, lineHeight, letterSpacing, foreground);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+void textClear(wasm_exec_env_t env, uint32_t text)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    textClearImpl(vm, text);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+void textLayout(wasm_exec_env_t env, uint32_t text, const rive_text_layout_desc_v1* desc, uint32_t descByteCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    textLayoutImpl(vm, text, desc, descByteCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+void textDraw(wasm_exec_env_t env, uint32_t text, uint32_t renderer, uint32_t paint)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    textDrawImpl(vm, text, renderer, paint);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+void textBounds(wasm_exec_env_t env, uint32_t text, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return;
+    }
+    textBoundsImpl(vm, text, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textLength(wasm_exec_env_t env, uint32_t text)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return textLengthImpl(vm, text);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textLines(wasm_exec_env_t env, uint32_t text, uint32_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return textLinesImpl(vm, text, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textRuns(wasm_exec_env_t env, uint32_t text, uint32_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return textRunsImpl(vm, text, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textGlyphs(wasm_exec_env_t env, uint32_t text, uint32_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return textGlyphsImpl(vm, text, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textHitTest(wasm_exec_env_t env, uint32_t text, float x, float y)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return textHitTestImpl(vm, text, x, y);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textCaret(wasm_exec_env_t env, uint32_t text, uint32_t index, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return textCaretImpl(vm, text, index, out, outCount);
+}
+#endif
+#ifdef WITH_RIVE_TEXT
+uint32_t textSelectionRects(wasm_exec_env_t env, uint32_t text, uint32_t from, uint32_t to, float* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (outCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)out, (uint64_t)outCount * 4))
+    {
+        return {};
+    }
+    return textSelectionRectsImpl(vm, text, from, to, out, outCount);
+}
+#endif
 uint32_t shaderLinear(wasm_exec_env_t env, float sx, float sy, float ex, float ey, uint32_t colors, uint32_t stops, uint32_t count)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
@@ -1678,6 +2138,27 @@ void shaderRelease(wasm_exec_env_t env, uint32_t shader)
 {
     WasmScriptingVM* vm = vmFromEnv(env);
     shaderReleaseImpl(vm, shader);
+}
+uint32_t testBlob(wasm_exec_env_t env, const char* name, uint32_t nameLength, uint8_t* out, uint32_t outCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmStringArg nameUtf8(vm, name, nameLength);
+    return testBlobImpl(vm, nameUtf8.data(), nameUtf8.size(), out, outCount);
+}
+void transitionChildDraw(wasm_exec_env_t env, uint32_t child, uint32_t renderer)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    transitionChildDrawImpl(vm, child, renderer);
+}
+float transitionChildWidth(wasm_exec_env_t env, uint32_t child)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return transitionChildWidthImpl(vm, child);
+}
+float transitionChildHeight(wasm_exec_env_t env, uint32_t child)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return transitionChildHeightImpl(vm, child);
 }
 void rendererSave(wasm_exec_env_t env, uint32_t renderer)
 {
@@ -1729,11 +2210,74 @@ void rendererDrawImageMeshInstanced(wasm_exec_env_t env, uint32_t renderer, uint
     WasmScriptingVM* vm = vmFromEnv(env);
     rendererDrawImageMeshInstancedImpl(vm, renderer, image, sampler, vertexBuffer, uvBuffer, indexBuffer, instances);
 }
+uint32_t netFetch(wasm_exec_env_t env, const uint8_t* request, uint32_t requestCount, uint32_t token)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return netFetchImpl(vm, request, requestCount, token);
+}
+void netFetchCancel(wasm_exec_env_t env, uint32_t token)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    netFetchCancelImpl(vm, token);
+}
+uint32_t fileDecode(wasm_exec_env_t env, const uint8_t* bytes, uint32_t byteCount, uint32_t* statusOut, uint32_t statusCount)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    if (statusCount != 0 && !wasm_runtime_validate_native_addr(wasm_runtime_get_module_inst(env), (void*)statusOut, (uint64_t)statusCount * 4))
+    {
+        return {};
+    }
+    return fileDecodeImpl(vm, bytes, byteCount, statusOut, statusCount);
+}
+void fileRelease(wasm_exec_env_t env, uint32_t file)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    fileReleaseImpl(vm, file);
+}
+uint32_t fileArtboardCount(wasm_exec_env_t env, uint32_t file)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fileArtboardCountImpl(vm, file);
+}
+uint32_t fileArtboardName(wasm_exec_env_t env, uint32_t file, uint32_t index, char* buffer, uint32_t capacity)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fileArtboardNameImpl(vm, file, index, buffer, capacity);
+}
+uint32_t fileBindable(wasm_exec_env_t env, uint32_t file, const char* name, uint32_t nameLength, uint32_t useDefault)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    WasmStringArg nameUtf8(vm, name, nameLength);
+    return fileBindableImpl(vm, file, nameUtf8.data(), nameUtf8.size(), useDefault);
+}
+void fileBindableRelease(wasm_exec_env_t env, uint32_t bindable)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    fileBindableReleaseImpl(vm, bindable);
+}
+uint32_t fileBindableName(wasm_exec_env_t env, uint32_t bindable, char* buffer, uint32_t capacity)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fileBindableNameImpl(vm, bindable, buffer, capacity);
+}
+uint32_t fileBindableData(wasm_exec_env_t env, uint32_t bindable)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fileBindableDataImpl(vm, bindable);
+}
+uint32_t fileBindableEqual(wasm_exec_env_t env, uint32_t a, uint32_t b)
+{
+    WasmScriptingVM* vm = vmFromEnv(env);
+    return fileBindableEqualImpl(vm, a, b);
+}
 
 NativeSymbol kRtNatives[] = {
     {"log", (void*)rtLog, "(i*~)", nullptr},
     {"mark_needs_update", (void*)rtMarkNeedsUpdate, "(i)", nullptr},
     {"budget_exceeded", (void*)rtBudgetExceeded, "(i)", nullptr},
+    {"error", (void*)rtError, "(*~)", nullptr},
+    {"now", (void*)rtNow, "()F", nullptr},
+    {"date_now", (void*)rtDateNow, "()F", nullptr},
     {"debug_enter", (void*)rtDebugEnter, "(ii)", nullptr},
     {"debug_line", (void*)rtDebugLine, "(i)i", nullptr},
     {"debug_leave", (void*)rtDebugLeave, "()", nullptr},
@@ -1754,22 +2298,23 @@ NativeSymbol kDataNatives[] = {
     {"has_view_model", (void*)dataHasViewModel, "(*~)i", nullptr},
     {"new_view_model", (void*)dataNewViewModel, "(*~*~)i", nullptr},
     {"vmi_release", (void*)dataVmiRelease, "(i)", nullptr},
-    {"vmi_number", (void*)dataVmiNumber, "(i*~)i", nullptr},
-    {"vmi_boolean", (void*)dataVmiBoolean, "(i*~)i", nullptr},
-    {"vmi_string", (void*)dataVmiString, "(i*~)i", nullptr},
-    {"vmi_trigger", (void*)dataVmiTrigger, "(i*~)i", nullptr},
-    {"vmi_color", (void*)dataVmiColor, "(i*~)i", nullptr},
-    {"vmi_view_model", (void*)dataVmiViewModel, "(i*~)i", nullptr},
+    {"vmi_number", (void*)dataVmiNumber, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_boolean", (void*)dataVmiBoolean, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_string", (void*)dataVmiString, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_trigger", (void*)dataVmiTrigger, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_color", (void*)dataVmiColor, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_view_model", (void*)dataVmiViewModel, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
     {"vmi_property", (void*)dataVmiProperty, "(i*~*~)i", nullptr},
     {"vmi_instance", (void*)dataVmiInstance, "(i*~)i", nullptr},
     {"vmi_symbol_index", (void*)dataVmiSymbolIndex, "(i)i", nullptr},
     {"vmi_equal", (void*)dataVmiEqual, "(ii)i", nullptr},
-    {"view_model_get", (void*)dataViewModelGet, "(i)i", nullptr},
-    {"vmi_list", (void*)dataVmiList, "(i*~)i", nullptr},
-    {"vmi_enum", (void*)dataVmiEnum, "(i*~)i", nullptr},
-    {"vmi_image", (void*)dataVmiImage, "(i*~)i", nullptr},
-    {"vmi_font", (void*)dataVmiFont, "(i*~)i", nullptr},
-    {"vmi_blob", (void*)dataVmiBlob, "(i*~)i", nullptr},
+    {"view_model_get", (void*)dataViewModelGet, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_list", (void*)dataVmiList, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_enum", (void*)dataVmiEnum, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_image", (void*)dataVmiImage, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_font", (void*)dataVmiFont, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_blob", (void*)dataVmiBlob, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"vmi_artboard", (void*)dataVmiArtboard, "(i*~)i", nullptr},
     {"image_get", (void*)dataImageGet, "(i)i", nullptr},
     {"image_set", (void*)dataImageSet, "(ii)", nullptr},
     {"font_get", (void*)dataFontGet, "(i)i", nullptr},
@@ -1780,12 +2325,14 @@ NativeSymbol kDataNatives[] = {
     {"blob_name", (void*)dataBlobName, "(i*~)i", nullptr},
     {"blob_set", (void*)dataBlobSet, "(i*~)", nullptr},
     {"blob_clear", (void*)dataBlobClear, "(i)", nullptr},
-    {"enum_get", (void*)dataEnumGet, "(i*~)i", nullptr},
+    {"artboard_get", (void*)dataArtboardGet, "(i)i", nullptr},
+    {"artboard_set", (void*)dataArtboardSet, "(ii)", nullptr},
+    {"enum_get", (void*)dataEnumGet, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
     {"enum_set", (void*)dataEnumSet, "(i*~)", nullptr},
     {"enum_values", (void*)dataEnumValues, "(i*~)i", nullptr},
     {"prop_release", (void*)dataPropRelease, "(i)", nullptr},
     {"trigger_fire", (void*)dataTriggerFire, "(i)", nullptr},
-    {"list_length", (void*)dataListLength, "(i)i", nullptr},
+    {"list_length", (void*)dataListLength, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
     {"list_push", (void*)dataListPush, "(ii)", nullptr},
     {"list_pop", (void*)dataListPop, "(i)i", nullptr},
     {"list_shift", (void*)dataListShift, "(i)i", nullptr},
@@ -1795,15 +2342,16 @@ NativeSymbol kDataNatives[] = {
     {"list_remove", (void*)dataListRemove, "(ii)", nullptr},
     {"list_remove_at", (void*)dataListRemoveAt, "(ii)", nullptr},
     {"list_remove_all_of", (void*)dataListRemoveAllOf, "(ii)", nullptr},
-    {"list_get", (void*)dataListGet, "(ii)i", nullptr},
+    {"list_get", (void*)dataListGet, "(ii)i", (void*)&wasm_runtime_rive_leaf_native},
     {"view_model_set", (void*)dataViewModelSet, "(ii)", nullptr},
-    {"color_get", (void*)dataColorGet, "(i)i", nullptr},
+    {"color_get", (void*)dataColorGet, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
     {"color_set", (void*)dataColorSet, "(ii)", nullptr},
-    {"number_get", (void*)dataNumberGet, "(i)f", nullptr},
+    {"number_get", (void*)dataNumberGet, "(i)f", (void*)&wasm_runtime_rive_leaf_native},
     {"number_set", (void*)dataNumberSet, "(if)", nullptr},
-    {"boolean_get", (void*)dataBooleanGet, "(i)i", nullptr},
+    {"boolean_get", (void*)dataBooleanGet, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
     {"boolean_set", (void*)dataBooleanSet, "(ii)", nullptr},
-    {"string_get", (void*)dataStringGet, "(i*~)i", nullptr},
+    {"string_get", (void*)dataStringGet, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"string_changed", (void*)dataStringChanged, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
     {"string_set", (void*)dataStringSet, "(i*~)", nullptr},
     {"watch", (void*)dataWatch, "(ii)", nullptr},
     {"unwatch", (void*)dataUnwatch, "(i)", nullptr},
@@ -1816,24 +2364,27 @@ NativeSymbol kArtboardNatives[] = {
     {"draw", (void*)artboardDraw, "(ii)", nullptr},
     {"instance", (void*)artboardInstance, "(ii)i", nullptr},
     {"data", (void*)artboardData, "(i)i", nullptr},
-    {"width", (void*)artboardWidth, "(i)f", nullptr},
-    {"height", (void*)artboardHeight, "(i)f", nullptr},
+    {"width", (void*)artboardWidth, "(i)f", (void*)&wasm_runtime_rive_leaf_native},
+    {"height", (void*)artboardHeight, "(i)f", (void*)&wasm_runtime_rive_leaf_native},
     {"set_width", (void*)artboardSetWidth, "(if)", nullptr},
     {"set_height", (void*)artboardSetHeight, "(if)", nullptr},
     {"frame_origin", (void*)artboardFrameOrigin, "(i)i", nullptr},
     {"set_frame_origin", (void*)artboardSetFrameOrigin, "(ii)", nullptr},
-    {"bounds", (void*)artboardBounds, "(i*~)", nullptr},
+    {"bounds", (void*)artboardBounds, "(i*~)", (void*)&wasm_runtime_rive_leaf_native},
     {"pointer_event", (void*)artboardPointerEvent, "(iiiff)i", nullptr},
+    {"scroll_event", (void*)artboardScrollEvent, "(iiffffiif)i", nullptr},
+    {"gamepad_event", (void*)artboardGamepadEvent, "(i*~)i", nullptr},
     {"animation", (void*)artboardAnimation, "(i*~)i", nullptr},
     {"animation_release", (void*)artboardAnimationRelease, "(i)", nullptr},
     {"animation_duration", (void*)artboardAnimationDuration, "(i)f", nullptr},
     {"animation_advance", (void*)artboardAnimationAdvance, "(if)i", nullptr},
     {"animation_set_time", (void*)artboardAnimationSetTime, "(ifi)", nullptr},
+    {"add_to_path", (void*)artboardAddToPath, "(iiffffff)", nullptr},
     {"node", (void*)artboardNode, "(i*~)i", nullptr},
     {"node_release", (void*)artboardNodeRelease, "(i)", nullptr},
-    {"node_transform", (void*)artboardNodeTransform, "(i*~)", nullptr},
+    {"node_transform", (void*)artboardNodeTransform, "(i*~)", (void*)&wasm_runtime_rive_leaf_native},
     {"node_set", (void*)artboardNodeSet, "(iiff)", nullptr},
-    {"node_world_transform", (void*)artboardNodeWorldTransform, "(i*~)", nullptr},
+    {"node_world_transform", (void*)artboardNodeWorldTransform, "(i*~)", (void*)&wasm_runtime_rive_leaf_native},
     {"node_set_world_transform", (void*)artboardNodeSetWorldTransform, "(i*~)", nullptr},
     {"node_decompose", (void*)artboardNodeDecompose, "(i*~)", nullptr},
     {"node_path_verbs", (void*)artboardNodePathVerbs, "(i*~)i", nullptr},
@@ -1881,36 +2432,40 @@ NativeSymbol kAudioNatives[] = {
 };
 
 NativeSymbol kPathNatives[] = {
-    {"new", (void*)pathNew, "()i", nullptr},
-    {"update", (void*)pathUpdate, "(i*~*~i)", nullptr},
-    {"release", (void*)pathRelease, "(i)", nullptr},
-    {"effect_result", (void*)pathEffectResult, "(*~*~)", nullptr},
+    {"new", (void*)pathNew, "()i", (void*)&wasm_runtime_rive_leaf_native},
+    {"update", (void*)pathUpdate, "(i*~*~i)", (void*)&wasm_runtime_rive_leaf_native},
+    {"release", (void*)pathRelease, "(i)", (void*)&wasm_runtime_rive_leaf_native},
+    {"add", (void*)pathAdd, "(iiffffff)", (void*)&wasm_runtime_rive_leaf_native},
+    {"verbs", (void*)pathVerbs, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"points", (void*)pathPoints, "(i*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"effect_result", (void*)pathEffectResult, "(*~*~)", (void*)&wasm_runtime_rive_leaf_native},
 };
 
 NativeSymbol kMeasureNatives[] = {
-    {"path_new", (void*)measurePathNew, "(*~*~)i", nullptr},
-    {"contours_new", (void*)measureContoursNew, "(*~*~)i", nullptr},
-    {"contour_next", (void*)measureContourNext, "(i)i", nullptr},
-    {"length", (void*)measureLength, "(i)f", nullptr},
-    {"is_closed", (void*)measureIsClosed, "(i)i", nullptr},
-    {"pos_tan", (void*)measurePosTan, "(if*~)", nullptr},
-    {"warp", (void*)measureWarp, "(iff*~)", nullptr},
-    {"extract", (void*)measureExtract, "(iffi)i", nullptr},
-    {"extract_read", (void*)measureExtractRead, "(i*~*~)i", nullptr},
-    {"release", (void*)measureRelease, "(i)", nullptr},
+    {"path_new", (void*)measurePathNew, "(*~*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"contours_new", (void*)measureContoursNew, "(*~*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"contour_next", (void*)measureContourNext, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"length", (void*)measureLength, "(i)f", (void*)&wasm_runtime_rive_leaf_native},
+    {"is_closed", (void*)measureIsClosed, "(i)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"pos_tan", (void*)measurePosTan, "(if*~)", (void*)&wasm_runtime_rive_leaf_native},
+    {"warp", (void*)measureWarp, "(iff*~)", (void*)&wasm_runtime_rive_leaf_native},
+    {"extract", (void*)measureExtract, "(iffi)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"extract_read", (void*)measureExtractRead, "(i*~*~)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"release", (void*)measureRelease, "(i)", (void*)&wasm_runtime_rive_leaf_native},
 };
 
 NativeSymbol kPaintNatives[] = {
-    {"new", (void*)paintNew, "()i", nullptr},
-    {"release", (void*)paintRelease, "(i)", nullptr},
-    {"style", (void*)paintStyle, "(ii)", nullptr},
-    {"color", (void*)paintColor, "(ii)", nullptr},
-    {"thickness", (void*)paintThickness, "(if)", nullptr},
-    {"join", (void*)paintJoin, "(ii)", nullptr},
-    {"cap", (void*)paintCap, "(ii)", nullptr},
-    {"blend_mode", (void*)paintBlendMode, "(ii)", nullptr},
-    {"feather", (void*)paintFeather, "(if)", nullptr},
-    {"shader", (void*)paintShader, "(ii)", nullptr},
+    {"new", (void*)paintNew, "()i", (void*)&wasm_runtime_rive_leaf_native},
+    {"release", (void*)paintRelease, "(i)", (void*)&wasm_runtime_rive_leaf_native},
+    {"style", (void*)paintStyle, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"color", (void*)paintColor, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"thickness", (void*)paintThickness, "(if)", (void*)&wasm_runtime_rive_leaf_native},
+    {"join", (void*)paintJoin, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"cap", (void*)paintCap, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"blend_mode", (void*)paintBlendMode, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"feather", (void*)paintFeather, "(if)", (void*)&wasm_runtime_rive_leaf_native},
+    {"shader", (void*)paintShader, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"shader_transform", (void*)paintShaderTransform, "(i*~)", (void*)&wasm_runtime_rive_leaf_native},
 };
 
 NativeSymbol kCanvasNatives[] = {
@@ -1931,22 +2486,23 @@ NativeSymbol kGpuNatives[] = {
     {"canvas_color_view", (void*)gpuCanvasColorView, "(i*~)i", nullptr},
     {"canvas_image", (void*)gpuCanvasImage, "(i)i", nullptr},
     {"canvas_resize", (void*)gpuCanvasResize, "(iii*~)i", nullptr},
+    {"target_view", (void*)gpuTargetView, "(i*~)i", nullptr},
     {"pass_begin", (void*)gpuPassBegin, "(*~*~)i", nullptr},
-    {"pass_set_pipeline", (void*)gpuPassSetPipeline, "(ii)", nullptr},
-    {"pass_set_vertex_buffer", (void*)gpuPassSetVertexBuffer, "(iiii)", nullptr},
-    {"pass_set_index_buffer", (void*)gpuPassSetIndexBuffer, "(iiii)", nullptr},
-    {"pass_set_bind_group", (void*)gpuPassSetBindGroup, "(iii*~)", nullptr},
-    {"pass_set_viewport", (void*)gpuPassSetViewport, "(iffffff)", nullptr},
-    {"pass_set_scissor", (void*)gpuPassSetScissor, "(iiiii)", nullptr},
-    {"pass_set_stencil_reference", (void*)gpuPassSetStencilReference, "(ii)", nullptr},
-    {"pass_set_blend_color", (void*)gpuPassSetBlendColor, "(iffff)", nullptr},
-    {"pass_draw", (void*)gpuPassDraw, "(iiiii)", nullptr},
-    {"pass_draw_indexed", (void*)gpuPassDrawIndexed, "(iiiiii)", nullptr},
+    {"pass_set_pipeline", (void*)gpuPassSetPipeline, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_vertex_buffer", (void*)gpuPassSetVertexBuffer, "(iiii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_index_buffer", (void*)gpuPassSetIndexBuffer, "(iiii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_bind_group", (void*)gpuPassSetBindGroup, "(iii*~)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_viewport", (void*)gpuPassSetViewport, "(iffffff)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_scissor", (void*)gpuPassSetScissor, "(iiiii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_stencil_reference", (void*)gpuPassSetStencilReference, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_set_blend_color", (void*)gpuPassSetBlendColor, "(iffff)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_draw", (void*)gpuPassDraw, "(iiiii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"pass_draw_indexed", (void*)gpuPassDrawIndexed, "(iiiiii)", (void*)&wasm_runtime_rive_leaf_native},
     {"pass_finish", (void*)gpuPassFinish, "(i)", nullptr},
     {"pass_release", (void*)gpuPassRelease, "(i)", nullptr},
     {"image_view", (void*)gpuImageView, "(iii)i", nullptr},
     {"buffer_new", (void*)gpuBufferNew, "(iii*~)i", nullptr},
-    {"buffer_update", (void*)gpuBufferUpdate, "(ii*~)", nullptr},
+    {"buffer_update", (void*)gpuBufferUpdate, "(ii*~)", (void*)&wasm_runtime_rive_leaf_native},
     {"buffer_release", (void*)gpuBufferRelease, "(i)", nullptr},
     {"texture_new", (void*)gpuTextureNew, "(*~)i", nullptr},
     {"texture_upload", (void*)gpuTextureUpload, "(i*~*~)", nullptr},
@@ -1958,21 +2514,31 @@ NativeSymbol kGpuNatives[] = {
     {"shader_target", (void*)gpuShaderTarget, "()i", nullptr},
     {"shader_asset_bytes", (void*)gpuShaderAssetBytes, "(i*~*~)i", nullptr},
     {"shader_asset_id", (void*)gpuShaderAssetId, "(i*~)i", nullptr},
-    {"shader_module_new", (void*)gpuShaderModuleNew, "(*~*~)i", nullptr},
+    {"shader_module_from_asset", (void*)gpuShaderModuleFromAsset, "(i*~i)i", nullptr},
+#ifdef WITH_RIVE_TOOLS
+    {"shader_module_from_rstb", (void*)gpuShaderModuleFromRstb, "(*~ii)i", nullptr},
+#endif
     {"shader_module_release", (void*)gpuShaderModuleRelease, "(i)", nullptr},
     {"bind_group_layout_new", (void*)gpuBindGroupLayoutNew, "(i*~)i", nullptr},
     {"bind_group_layout_release", (void*)gpuBindGroupLayoutRelease, "(i)", nullptr},
     {"bind_group_layout_from_shader", (void*)gpuBindGroupLayoutFromShader, "(ii*~)i", nullptr},
+    {"bind_group_layout_from_shaders", (void*)gpuBindGroupLayoutFromShaders, "(iii*~)i", nullptr},
+    {"bind_group_layout_from_entries", (void*)gpuBindGroupLayoutFromEntries, "(i*~i*~i)i", nullptr},
     {"bind_group_new", (void*)gpuBindGroupNew, "(i*~*~*~)i", nullptr},
     {"bind_group_release", (void*)gpuBindGroupRelease, "(i)", nullptr},
     {"pipeline_new", (void*)gpuPipelineNew, "(*~*~)i", nullptr},
     {"pipeline_release", (void*)gpuPipelineRelease, "(i)", nullptr},
 };
 
+NativeSymbol kMat4Natives[] = {
+    {"multiply", (void*)mat4Multiply, "(*~*~*~)", (void*)&wasm_runtime_rive_leaf_native},
+    {"invert", (void*)mat4Invert, "(*~*~)i", (void*)&wasm_runtime_rive_leaf_native},
+};
+
 NativeSymbol kBufferNatives[] = {
-    {"new", (void*)bufferNew, "(iii)i", nullptr},
-    {"update", (void*)bufferUpdate, "(i*~)", nullptr},
-    {"release", (void*)bufferRelease, "(i)", nullptr},
+    {"new", (void*)bufferNew, "(iii)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"update", (void*)bufferUpdate, "(i*~)", (void*)&wasm_runtime_rive_leaf_native},
+    {"release", (void*)bufferRelease, "(i)", (void*)&wasm_runtime_rive_leaf_native},
 };
 
 NativeSymbol kMeshInstancesNatives[] = {
@@ -1995,23 +2561,118 @@ NativeSymbol kImageNatives[] = {
     {"decode_cancel", (void*)imageDecodeCancel, "(i)", nullptr},
 };
 
+NativeSymbol kFontNatives[] = {
+    {"from_asset", (void*)fontFromAsset, "(i*~)i", nullptr},
+#ifdef WITH_RIVE_TEXT
+    {"decode", (void*)fontDecode, "(*~)i", nullptr},
+#endif
+    {"release", (void*)fontRelease, "(i)", nullptr},
+    {"metrics", (void*)fontMetrics, "(i*~)", nullptr},
+    {"weight", (void*)fontWeight, "(i)i", nullptr},
+    {"is_italic", (void*)fontIsItalic, "(i)i", nullptr},
+    {"axis_count", (void*)fontAxisCount, "(i)i", nullptr},
+    {"axis", (void*)fontAxis, "(ii*~)", nullptr},
+    {"axis_value", (void*)fontAxisValue, "(ii)f", nullptr},
+    {"features", (void*)fontFeatures, "(i*~)i", nullptr},
+    {"has_glyph", (void*)fontHasGlyph, "(ii)i", nullptr},
+    {"with_options", (void*)fontWithOptions, "(i*~*~)i", nullptr},
+#ifdef WITH_RIVE_TEXT
+    {"glyph_verbs", (void*)fontGlyphVerbs, "(ii*~)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"glyph_points", (void*)fontGlyphPoints, "(ii*~)i", nullptr},
+#endif
+};
+
+NativeSymbol kTextNatives[] = {
+#ifdef WITH_RIVE_TEXT
+    {"new", (void*)textNew, "()i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"release", (void*)textRelease, "(i)", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"append", (void*)textAppend, "(i*~iifffi)", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"clear", (void*)textClear, "(i)", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"layout", (void*)textLayout, "(i*~)", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"draw", (void*)textDraw, "(iii)", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"bounds", (void*)textBounds, "(i*~)", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"length", (void*)textLength, "(i)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"lines", (void*)textLines, "(i*~)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"runs", (void*)textRuns, "(i*~)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"glyphs", (void*)textGlyphs, "(i*~)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"hit_test", (void*)textHitTest, "(iff)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"caret", (void*)textCaret, "(ii*~)i", nullptr},
+#endif
+#ifdef WITH_RIVE_TEXT
+    {"selection_rects", (void*)textSelectionRects, "(iii*~)i", nullptr},
+#endif
+};
+
 NativeSymbol kShaderNatives[] = {
-    {"linear", (void*)shaderLinear, "(ffffiii)i", nullptr},
-    {"radial", (void*)shaderRadial, "(fffiii)i", nullptr},
-    {"release", (void*)shaderRelease, "(i)", nullptr},
+    {"linear", (void*)shaderLinear, "(ffffiii)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"radial", (void*)shaderRadial, "(fffiii)i", (void*)&wasm_runtime_rive_leaf_native},
+    {"release", (void*)shaderRelease, "(i)", (void*)&wasm_runtime_rive_leaf_native},
+};
+
+NativeSymbol kTestNatives[] = {
+    {"blob", (void*)testBlob, "(*~*~)i", nullptr},
+};
+
+NativeSymbol kTransitionNatives[] = {
+    {"child_draw", (void*)transitionChildDraw, "(ii)", nullptr},
+    {"child_width", (void*)transitionChildWidth, "(i)f", nullptr},
+    {"child_height", (void*)transitionChildHeight, "(i)f", nullptr},
 };
 
 NativeSymbol kRendererNatives[] = {
-    {"save", (void*)rendererSave, "(i)", nullptr},
-    {"restore", (void*)rendererRestore, "(i)", nullptr},
-    {"transform", (void*)rendererTransform, "(iffffff)", nullptr},
-    {"draw_path", (void*)rendererDrawPath, "(iii)", nullptr},
-    {"clip_path", (void*)rendererClipPath, "(ii)", nullptr},
-    {"modulate_opacity", (void*)rendererModulateOpacity, "(if)", nullptr},
-    {"modulate_color", (void*)rendererModulateColor, "(iii)", nullptr},
-    {"draw_image", (void*)rendererDrawImage, "(iiiif)", nullptr},
-    {"draw_image_mesh", (void*)rendererDrawImageMesh, "(iiiiiiif)", nullptr},
-    {"draw_image_mesh_instanced", (void*)rendererDrawImageMeshInstanced, "(iiiiiii)", nullptr},
+    {"save", (void*)rendererSave, "(i)", (void*)&wasm_runtime_rive_leaf_native},
+    {"restore", (void*)rendererRestore, "(i)", (void*)&wasm_runtime_rive_leaf_native},
+    {"transform", (void*)rendererTransform, "(iffffff)", (void*)&wasm_runtime_rive_leaf_native},
+    {"draw_path", (void*)rendererDrawPath, "(iii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"clip_path", (void*)rendererClipPath, "(ii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"modulate_opacity", (void*)rendererModulateOpacity, "(if)", (void*)&wasm_runtime_rive_leaf_native},
+    {"modulate_color", (void*)rendererModulateColor, "(iii)", (void*)&wasm_runtime_rive_leaf_native},
+    {"draw_image", (void*)rendererDrawImage, "(iiiif)", (void*)&wasm_runtime_rive_leaf_native},
+    {"draw_image_mesh", (void*)rendererDrawImageMesh, "(iiiiiiif)", (void*)&wasm_runtime_rive_leaf_native},
+    {"draw_image_mesh_instanced", (void*)rendererDrawImageMeshInstanced, "(iiiiiii)", (void*)&wasm_runtime_rive_leaf_native},
+};
+
+NativeSymbol kNetNatives[] = {
+    {"fetch", (void*)netFetch, "(*~i)i", nullptr},
+    {"fetch_cancel", (void*)netFetchCancel, "(i)", nullptr},
+};
+
+NativeSymbol kFileNatives[] = {
+    {"decode", (void*)fileDecode, "(*~*~)i", nullptr},
+    {"release", (void*)fileRelease, "(i)", nullptr},
+    {"artboard_count", (void*)fileArtboardCount, "(i)i", nullptr},
+    {"artboard_name", (void*)fileArtboardName, "(ii*~)i", nullptr},
+    {"bindable", (void*)fileBindable, "(i*~i)i", nullptr},
+    {"bindable_release", (void*)fileBindableRelease, "(i)", nullptr},
+    {"bindable_name", (void*)fileBindableName, "(i*~)i", nullptr},
+    {"bindable_data", (void*)fileBindableData, "(i)i", nullptr},
+    {"bindable_equal", (void*)fileBindableEqual, "(ii)i", nullptr},
 };
 
 inline bool registerRiveBindingNatives()
@@ -2053,6 +2714,10 @@ inline bool registerRiveBindingNatives()
                kGpuNatives,
                sizeof(kGpuNatives) / sizeof(NativeSymbol)) &&
            wasm_runtime_register_natives(
+               "rive_mat4_v1",
+               kMat4Natives,
+               sizeof(kMat4Natives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
                "rive_buffer_v1",
                kBufferNatives,
                sizeof(kBufferNatives) / sizeof(NativeSymbol)) &&
@@ -2069,11 +2734,36 @@ inline bool registerRiveBindingNatives()
                kImageNatives,
                sizeof(kImageNatives) / sizeof(NativeSymbol)) &&
            wasm_runtime_register_natives(
+               "rive_font_v1",
+               kFontNatives,
+               sizeof(kFontNatives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
+               "rive_text_v1",
+               kTextNatives,
+               sizeof(kTextNatives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
                "rive_shader_v1",
                kShaderNatives,
                sizeof(kShaderNatives) / sizeof(NativeSymbol)) &&
            wasm_runtime_register_natives(
+               "rive_test_v1",
+               kTestNatives,
+               sizeof(kTestNatives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
+               "rive_transition_v1",
+               kTransitionNatives,
+               sizeof(kTransitionNatives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
                "rive_renderer_v1",
                kRendererNatives,
-               sizeof(kRendererNatives) / sizeof(NativeSymbol));
+               sizeof(kRendererNatives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
+               "rive_net_v1",
+               kNetNatives,
+               sizeof(kNetNatives) / sizeof(NativeSymbol)) &&
+           wasm_runtime_register_natives(
+               "rive_file_v1",
+               kFileNatives,
+               sizeof(kFileNatives) / sizeof(NativeSymbol));
 }
+#endif

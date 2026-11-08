@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 import 'src/ffi/layout_engine_ffi.dart'
     if (dart.library.js_interop) 'src/web/layout_engine_web.dart';
 
+export 'src/interpolator_callbacks.dart';
+
 enum LayoutOverflow { visible, hidden, scroll }
 
 enum LayoutAlign {
@@ -439,4 +441,14 @@ abstract class LayoutNode {
   /// cell/track, so N lines describe N-1 cells.
   List<double> get gridColumnLineOffsets;
   List<double> get gridRowLineOffsets;
+
+  /// The gap between those lines' tracks, as content distribution spaced
+  /// them.
+  double get gridColumnGap;
+  double get gridRowGap;
+
+  /// Content sizes of a grid's items that have no node, per row and column
+  /// from the first grid line: tracks size as if those items were children.
+  /// Both empty clears. Returns whether they changed, which dirties the node.
+  bool setGridVirtualContributions(List<double> rows, List<double> columns);
 }

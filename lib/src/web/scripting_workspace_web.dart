@@ -35,6 +35,11 @@ late js.JSFunction _scriptingWorkspaceFindInFiles;
 late js.JSFunction _nativeFontBytes;
 late js.JSFunction _freeNativeFont;
 late js.JSFunction _scriptingWorkspaceRequestVM;
+late js.JSFunction _scriptingWorkspaceRequestCompileWasmAs;
+late js.JSFunction _scriptingWorkspaceSetRascStdDir;
+late js.JSFunction _scriptingWorkspaceSetBundledRascStd;
+late js.JSFunction _scriptingWorkspaceSetAsBakeOptions;
+late js.JSFunction _scriptingWorkspaceRequestTranslateToAs;
 late js.JSFunction _setScriptSourceWithType;
 late js.JSFunction _setDocumentSource;
 late js.JSFunction _setScriptSourceScoped;
@@ -144,6 +149,16 @@ class ScriptingWorkspaceWasm extends ScriptingWorkspace {
         module['_scriptingWorkspaceFindInFiles'] as js.JSFunction;
     _scriptingWorkspaceRequestVM =
         module['scriptingWorkspaceRequestVM'] as js.JSFunction;
+    _scriptingWorkspaceRequestCompileWasmAs =
+        module['scriptingWorkspaceRequestCompileWasmAs'] as js.JSFunction;
+    _scriptingWorkspaceSetRascStdDir =
+        module['scriptingWorkspaceSetRascStdDir'] as js.JSFunction;
+    _scriptingWorkspaceSetBundledRascStd =
+        module['scriptingWorkspaceSetBundledRascStd'] as js.JSFunction;
+    _scriptingWorkspaceSetAsBakeOptions =
+        module['scriptingWorkspaceSetAsBakeOptions'] as js.JSFunction;
+    _scriptingWorkspaceRequestTranslateToAs =
+        module['scriptingWorkspaceRequestTranslateToAs'] as js.JSFunction;
     _nativeFontBytes = module['nativeFontBytes'] as js.JSFunction;
     _freeNativeFont = module['_freeNativeFont'] as js.JSFunction;
     _scriptingWorkspaceSetOreContext =
@@ -158,11 +173,13 @@ class ScriptingWorkspaceWasm extends ScriptingWorkspace {
   );
   int _nativePtr = 0;
 
-  ScriptingWorkspaceWasm({bool canvasEnabled = false}) {
+  ScriptingWorkspaceWasm(
+      {bool canvasEnabled = false, bool netEnabled = false}) {
     _nativePtr = (_makeScriptingWorkspace.callAsFunction(
       null,
       workReadyCallback.toJS,
       canvasEnabled.toJS,
+      netEnabled.toJS,
     ) as js.JSNumber)
         .toDartInt;
     _finalizer.attach(this, _nativePtr, detach: this);
@@ -586,6 +603,81 @@ class ScriptingWorkspaceWasm extends ScriptingWorkspace {
   }
 
   @override
+  Future<WasmModuleResult?> requestCompileWasmAs({
+    WasmSimd simd = WasmSimd.on,
+    bool forExport = false,
+    bool debugProbes = true,
+    bool fuel = false,
+  }) {
+    final workId = (_scriptingWorkspaceRequestCompileWasmAs.callMethodVarArgs(
+      'call'.toJS,
+      [
+        null,
+        _nativePtr.toJS,
+        simd.index.toJS,
+        forExport.toJS,
+        debugProbes.toJS,
+        fuel.toJS,
+      ],
+    ) as js.JSNumber)
+        .toDartInt;
+    return registerCompleter(workId);
+  }
+
+  @override
+  void setRascStdDir(String dir) {
+    _scriptingWorkspaceSetRascStdDir.callAsFunction(
+        null, _nativePtr.toJS, dir.toJS);
+  }
+
+  @override
+  void setAsBakeOptions({WasmSimd simd = WasmSimd.on}) {
+    _scriptingWorkspaceSetAsBakeOptions.callAsFunction(
+        null, _nativePtr.toJS, simd.index.toJS);
+  }
+
+  @override
+  bool setBundledRascStd() =>
+      (_scriptingWorkspaceSetBundledRascStd.callAsFunction(
+              null, _nativePtr.toJS) as js.JSBoolean)
+          .toDart;
+
+  @override
+  Future<AsTranslation?> requestTranslateToAs(String scriptId) {
+    final workId = (_scriptingWorkspaceRequestTranslateToAs.callAsFunction(
+      null,
+      _nativePtr.toJS,
+      scriptId.toJS,
+    ) as js.JSNumber)
+        .toDartInt;
+    return registerCompleter(workId);
+  }
+
+  @override
+  Future<HighlightResult> setAnimaScriptSource(
+    String scriptId,
+    String scriptName,
+    String source, {
+    bool highlight = false,
+  }) async {
+    final workId = (_setScriptSourceWithType.callAsFunctionEx(
+      null,
+      _nativePtr.toJS,
+      scriptId.toJS,
+      scriptName.toJS,
+      source.toJS,
+      5.toJS,
+      highlight.toJS,
+    ) as js.JSNumber)
+        .toDartInt;
+    if (!highlight) {
+      unawaited(registerCompleter(workId));
+      return HighlightResult(HighlightResultType.unknown);
+    }
+    return registerCompleter(workId);
+  }
+
+  @override
   Future<bool> checkNeedsRecompile(String scriptId) {
     final workId = (_scriptingWorkspaceCheckNeedsRecompile.callAsFunction(
       null,
@@ -683,8 +775,14 @@ class ScriptingWorkspaceWasm extends ScriptingWorkspace {
   }
 }
 
-ScriptingWorkspace makeScriptingWorkspace({bool canvasEnabled = false}) =>
-    ScriptingWorkspaceWasm(canvasEnabled: canvasEnabled);
+ScriptingWorkspace makeScriptingWorkspace({
+  bool canvasEnabled = false,
+  bool netEnabled = false,
+}) =>
+    ScriptingWorkspaceWasm(
+      canvasEnabled: canvasEnabled,
+      netEnabled: netEnabled,
+    );
 
 /// On web, GPU scripting is now configured via [configureGPUFromRenderTextureImpl]
 /// which extracts context pointers directly from the RenderTexture. This legacy

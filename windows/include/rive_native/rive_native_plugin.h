@@ -14,8 +14,8 @@ extern "C"
 {
 #endif
 
-    FLUTTER_PLUGIN_EXPORT void RiveNativePluginRegisterWithRegistrar(
-        FlutterDesktopPluginRegistrarRef registrar);
+  FLUTTER_PLUGIN_EXPORT void RiveNativePluginRegisterWithRegistrar(
+      FlutterDesktopPluginRegistrarRef registrar);
 
 #if defined(__cplusplus)
 } // extern "C"

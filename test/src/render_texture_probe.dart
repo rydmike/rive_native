@@ -8,9 +8,10 @@ final class NoopTexturePainter extends rive.RenderTexturePainter {
   Color get background => const Color(0x00000000);
 
   @override
-  bool paint(rive.RenderTexture texture, double devicePixelRatio, Size size,
-          double elapsedSeconds) =>
-      false;
+  bool advance(double elapsedSeconds) => false;
+
+  @override
+  void paint(rive.RenderTexture texture, double devicePixelRatio, Size size) {}
 }
 
 /// Hosts [child] the way `texture.widget()` needs (its Stack of

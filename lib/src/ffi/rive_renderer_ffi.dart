@@ -201,6 +201,32 @@ final void Function(Pointer<Void>, Pointer<Void>, int, double, double, double,
                     Float, Float, Float, Float)>>('paintModulatedImage')
         .asFunction();
 
+final bool _hasPaintModulatedArtboard =
+    nativeLib.providesSymbol('paintModulatedArtboard');
+final bool Function(Pointer<Void>, Pointer<Void>, Pointer<Void>, Pointer<Void>,
+        int, double, double, double, double, double, double)
+    _paintModulatedArtboard = !_hasPaintModulatedArtboard
+        ? ((Pointer<Void> a, Pointer<Void> b, Pointer<Void> c, Pointer<Void> d,
+                int e, double f, double g, double h, double i, double j,
+                double k) =>
+            false)
+        : nativeLib
+            .lookup<
+                NativeFunction<
+                    Bool Function(
+                        Pointer<Void>,
+                        Pointer<Void>,
+                        Pointer<Void>,
+                        Pointer<Void>,
+                        Uint8,
+                        Float,
+                        Float,
+                        Float,
+                        Float,
+                        Float,
+                        Float)>>('paintModulatedArtboard')
+            .asFunction();
+
 final Pointer<Void> Function() _makeDashPathEffect = nativeLib
     .lookup<NativeFunction<Pointer<Void> Function()>>('makeDashPathEffect')
     .asFunction();
@@ -245,6 +271,56 @@ final void Function(Pointer<Void>, double distance, bool percentage)
 final void Function(Pointer<Void>) _dashPathInvalidate = nativeLib
     .lookup<NativeFunction<Void Function(Pointer<Void>)>>('dashPathInvalidate')
     .asFunction();
+
+// Layer masking. Looked up lazily and tolerantly: an editor built against an
+// older librive_native degrades to "no masking" instead of failing to load.
+final bool _hasLayerMask = nativeLib.providesSymbol('rendererBeginMask');
+
+final int Function() _acquireMaskHandle = !_hasLayerMask
+    ? (() => 0)
+    : nativeLib
+        .lookup<NativeFunction<Uint64 Function()>>('rendererAcquireMaskHandle')
+        .asFunction();
+
+final void Function(int) _releaseMask = !_hasLayerMask
+    ? ((int _) {})
+    : nativeLib
+        .lookup<NativeFunction<Void Function(Uint64)>>('rendererReleaseMask')
+        .asFunction();
+
+final Pointer<Void> Function(Pointer<Void>, Pointer<Void>, int, int, double,
+    double, double, double, double) _rendererBeginMask = !_hasLayerMask
+    ? ((Pointer<Void> a, Pointer<Void> b, int c, int d, double e, double f,
+            double g, double h, double i) =>
+        nullptr)
+    : nativeLib
+        .lookup<
+            NativeFunction<
+                Pointer<Void> Function(Pointer<Void>, Pointer<Void>, Uint64,
+                    Uint8, Float, Float, Float, Float, Float)>>(
+            'rendererBeginMask')
+        .asFunction();
+
+final Pointer<Void> Function(Pointer<Void>) _rendererBeginMaskSource =
+    !_hasLayerMask
+        ? ((Pointer<Void> _) => nullptr)
+        : nativeLib
+            .lookup<NativeFunction<Pointer<Void> Function(Pointer<Void>)>>(
+                'rendererBeginMaskSource')
+            .asFunction();
+
+final void Function(Pointer<Void>) _rendererEndMask = !_hasLayerMask
+    ? ((Pointer<Void> _) {})
+    : nativeLib
+        .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
+            'rendererEndMask')
+        .asFunction();
+
+/// A key for one mask's retained offscreen canvases, so a mask does not
+/// re-allocate two textures every frame. Released with [releaseLayerMaskHandle]
+/// when the mask goes away.
+int acquireLayerMaskHandle() => _acquireMaskHandle();
+void releaseLayerMaskHandle(int handle) => _releaseMask(handle);
 
 final Pointer<Void> Function(Pointer<Void>, Pointer<Void>, Pointer<Void>)
     _dashPathEffectPath = nativeLib
@@ -589,6 +665,37 @@ final bool Function(Pointer<Void>) _rawTextInputGetObscured = nativeLib
 final void Function(Pointer<Void>, bool) _rawTextInputSetObscured = nativeLib
     .lookup<NativeFunction<Void Function(Pointer<Void>, Bool)>>(
         'rawTextInputSetObscured')
+    .asFunction();
+
+final bool Function(Pointer<Void>) _rawTextInputGetHugsWidth = nativeLib
+    .lookup<NativeFunction<Bool Function(Pointer<Void>)>>(
+        'rawTextInputGetHugsWidth')
+    .asFunction();
+
+final void Function(Pointer<Void>, bool) _rawTextInputSetHugsWidth = nativeLib
+    .lookup<NativeFunction<Void Function(Pointer<Void>, Bool)>>(
+        'rawTextInputSetHugsWidth')
+    .asFunction();
+
+final int Function(Pointer<Void>) _rawTextInputGetMaxCharacters = nativeLib
+    .lookup<NativeFunction<Uint32 Function(Pointer<Void>)>>(
+        'rawTextInputGetMaxCharacters')
+    .asFunction();
+
+final void Function(Pointer<Void>, int) _rawTextInputSetMaxCharacters =
+    nativeLib
+        .lookup<NativeFunction<Void Function(Pointer<Void>, Uint32)>>(
+            'rawTextInputSetMaxCharacters')
+        .asFunction();
+
+final int Function(Pointer<Void>) _rawTextInputGetMaxLines = nativeLib
+    .lookup<NativeFunction<Uint32 Function(Pointer<Void>)>>(
+        'rawTextInputGetMaxLines')
+    .asFunction();
+
+final void Function(Pointer<Void>, int) _rawTextInputSetMaxLines = nativeLib
+    .lookup<NativeFunction<Void Function(Pointer<Void>, Uint32)>>(
+        'rawTextInputSetMaxLines')
     .asFunction();
 
 final Pointer<Utf8> Function(Pointer<Void>) _rawTextInputGetText = nativeLib
@@ -1690,6 +1797,58 @@ class FFIRiveRenderer extends Renderer implements RiveFFIReference {
   void clipPath(covariant FFIRenderPath path) =>
       _clipPath(pointer, path.renderPath);
 
+  /// Parent renderers of the masks currently open, innermost last. `pointer`
+  /// is swapped to the offscreen renderer for the duration, so every existing
+  /// draw method lands in the right target without knowing about masking.
+  final List<Pointer<Void>> _maskParents = [];
+
+  @override
+  bool beginMask(MaskMode mode, AABB bounds,
+      {double resolution = 1, int handle = 0}) {
+    final factory = riveFactory;
+    if (factory is! FFIFactory) {
+      return false;
+    }
+    final canvasRenderer = _rendererBeginMask(
+      pointer,
+      factory.pointer,
+      handle,
+      mode.index,
+      bounds[0],
+      bounds[1],
+      bounds[2],
+      bounds[3],
+      resolution,
+    );
+    if (canvasRenderer == nullptr) {
+      return false;
+    }
+    _maskParents.add(pointer);
+    pointer = canvasRenderer;
+    return true;
+  }
+
+  @override
+  void beginMaskSource() {
+    if (_maskParents.isEmpty) {
+      return;
+    }
+    final source = _rendererBeginMaskSource(_maskParents.last);
+    if (source != nullptr) {
+      pointer = source;
+    }
+  }
+
+  @override
+  void endMask() {
+    if (_maskParents.isEmpty) {
+      return;
+    }
+    final parent = _maskParents.removeLast();
+    _rendererEndMask(parent);
+    pointer = parent;
+  }
+
   @override
   void drawImage(covariant FFIRenderImage image, ui.BlendMode blendMode,
           double opacity,
@@ -1844,6 +2003,34 @@ class FFIRenderPaint extends BufferedRenderPaint implements Finalizable {
       dirty,
       _scratchBuffer,
       wroteStops,
+    );
+  }
+
+  @override
+  bool modulatedArtboard(Renderer renderer, ArtboardPaintSource source,
+      ImageSampler sampler, Mat2D transform) {
+    final factory = renderer.riveFactory;
+    if (_nativePaint == nullptr ||
+        renderer is! RiveFFIReference ||
+        factory is! FFIFactory ||
+        source is! FFIArtboardPaintSource) {
+      return false;
+    }
+    // The renderer's current pointer, which an open layer mask swaps for its
+    // offscreen one, so an artboard paint inside a masked layer rasterizes
+    // for the canvas it actually lands in.
+    return _paintModulatedArtboard(
+      (renderer as RiveFFIReference).pointer,
+      factory.pointer,
+      _nativePaint,
+      source.pointer,
+      sampler.key,
+      transform[0],
+      transform[1],
+      transform[2],
+      transform[3],
+      transform[4],
+      transform[5],
     );
   }
 
@@ -2054,6 +2241,25 @@ final class FFIRawTextInput extends RawTextInput
 
   @override
   set obscured(bool value) => _rawTextInputSetObscured(_pointer, value);
+
+  @override
+  int get maxCharacters => _rawTextInputGetMaxCharacters(_pointer);
+
+  @override
+  set maxCharacters(int value) =>
+      _rawTextInputSetMaxCharacters(_pointer, value);
+
+  @override
+  int get maxLines => _rawTextInputGetMaxLines(_pointer);
+
+  @override
+  set maxLines(int value) => _rawTextInputSetMaxLines(_pointer, value);
+
+  @override
+  bool get hugsWidth => _rawTextInputGetHugsWidth(_pointer);
+
+  @override
+  set hugsWidth(bool value) => _rawTextInputSetHugsWidth(_pointer, value);
 
   @override
   String get text {

@@ -1,7 +1,7 @@
 import 'dart:js_interop' as js;
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
-import 'dart:ui' show Color;
+import 'dart:ui' show BlendMode, Color;
 
 import 'package:meta/meta.dart';
 import 'package:rive_native/focus.dart' as focus;
@@ -10,6 +10,7 @@ import 'package:rive_native/semantics.dart';
 import 'package:rive_native/rive_luau.dart';
 import 'package:rive_native/rive_native.dart';
 import 'package:rive_native/src/errors.dart';
+import 'package:rive_native/src/interpolator_callbacks.dart';
 import 'package:rive_native/src/rive.dart' show RiveProfiler;
 import 'package:rive_native/src/rive_native_web.dart';
 import 'package:rive_native/src/web/flutter_renderer_web.dart';
@@ -20,6 +21,7 @@ import 'package:rive_native/src/web/rive_deferred_web.dart'
         detachAndDisposeDeferredSession,
         enableDeferredAutoAttach;
 import 'package:rive_native/src/web/rive_luau_web.dart';
+import 'package:rive_native/src/web/rive_wasm_web.dart';
 import 'package:rive_native/src/web/rive_renderer_web.dart';
 import 'package:rive_native/src/web/rive_focus_web.dart';
 import 'package:rive_native/src/web/rive_semantic_web.dart';
@@ -112,6 +114,7 @@ Future<File?> decodeRiveFile(
     vmPointer = vm.vmPtr;
   }
 
+  riveFactory.startedDecodingFile();
   final result = (RiveWasm.loadRiveFile.callAsFunction(
     null,
     wasmBuffer.pointer,
@@ -122,12 +125,29 @@ Future<File?> decodeRiveFile(
   ) as js.JSNumber)
       .toDartInt;
   wasmBuffer.dispose();
+  // Script modules compile while the assets decode; the prepare that
+  // _startFileScripts awaits joins this one.
+  RiveWasm.riveScripting?.callMethod('prepare'.toJS);
   await riveFactory.completedDecodingFile(result != 0);
   assetLoaderCallable = null;
   if (result == 0) {
     return null;
   }
+  await _startFileScripts(result);
   return WebRiveFile(result, riveFactory, ownedSession);
+}
+
+/// Import left the file's wasm script modules registered with the page but
+/// not running. The page instantiates them asynchronously, then the file
+/// starts its scripts, all before anyone can make an artboard from it.
+Future<void> _startFileScripts(int file) async {
+  final startScripts = RiveWasm.riveFileStartScripts;
+  final scripting = RiveWasm.riveScripting;
+  if (startScripts == null || scripting == null) {
+    return;
+  }
+  await scripting.callMethod<js.JSPromise>('prepare'.toJS).toDart;
+  startScripts.callAsFunction(null, file.toJS);
 }
 
 abstract class WebFactory extends Factory {
@@ -337,6 +357,84 @@ class WebUnknownAsset extends WebFileAsset implements UnknownAsset {
   }
 }
 
+class WebArtboardPaintSource extends ArtboardPaintSource {
+  static final _finalizer = Finalizer((int pointer) =>
+      RiveWasm.artboardPaintSourceDelete?.callAsFunction(null, pointer.toJS));
+  int _pointer;
+
+  int get pointer => _pointer;
+
+  WebArtboardPaintSource(this._pointer) {
+    _finalizer.attach(this, _pointer, detach: this);
+  }
+
+  @override
+  int advance(double elapsedSeconds, int flags) {
+    final advance = RiveWasm.artboardPaintSourceAdvance;
+    if (advance == null || _pointer == 0) {
+      return 0;
+    }
+    return toPointer(advance.callAsFunction(
+        null, _pointer.toJS, elapsedSeconds.toJS, flags.toJS));
+  }
+
+  @override
+  void setDataContext(InternalDataContext? dataContext) {
+    final set = RiveWasm.artboardPaintSourceSetDataContext;
+    if (set == null || _pointer == 0) {
+      return;
+    }
+    set.callAsFunction(
+        null,
+        _pointer.toJS,
+        (dataContext is WebRiveDataContext ? dataContext.pointer : 0).toJS);
+  }
+
+  @override
+  bool updateDataBinds() {
+    final update = RiveWasm.artboardPaintSourceUpdateDataBinds;
+    if (update == null || _pointer == 0) {
+      return false;
+    }
+    final changed = update.callAsFunction(null, _pointer.toJS);
+    return changed is js.JSBoolean
+        ? changed.toDart
+        : changed is js.JSNumber && changed.toDartInt != 0;
+  }
+
+  @override
+  AABB get bounds {
+    final read = RiveWasm.artboardPaintSourceBounds;
+    if (read == null || _pointer == 0) {
+      return AABB();
+    }
+    final out = WasmBuffer(16);
+    try {
+      final base = (out.pointer as js.JSNumber).toDartInt;
+      read.callAsFunction(null, _pointer.toJS, base.toJS);
+      final view = RiveWasm.heapDataView(base, 16);
+      return AABB.fromValues(
+        view.getFloat32(0, Endian.little),
+        view.getFloat32(4, Endian.little),
+        view.getFloat32(8, Endian.little),
+        view.getFloat32(12, Endian.little),
+      );
+    } finally {
+      out.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_pointer == 0) {
+      return;
+    }
+    _finalizer.detach(this);
+    RiveWasm.artboardPaintSourceDelete?.callAsFunction(null, _pointer.toJS);
+    _pointer = 0;
+  }
+}
+
 class WebRiveFile extends File {
   @override
   final Factory riveFactory;
@@ -463,6 +561,36 @@ class WebRiveFile extends File {
   }
 
   @override
+  void adoptWasmScriptingVM(covariant WasmScriptingVMWasm vm) {
+    WasmScriptingWeb.fileAdoptWasmScriptingVM
+        .callAsFunction(null, _pointer.toJS, vm.pointer.toJS);
+    vm.markAdopted();
+  }
+
+  @override
+  bool get hasWasmScriptingVM =>
+      riveScriptingWasm &&
+      WasmScriptingWeb.linked &&
+      (WasmScriptingWeb.fileWasmScriptingVM.callAsFunction(null, _pointer.toJS)
+                  as js.JSNumber)
+              .toDartInt !=
+          0;
+
+  @override
+  bool registerWasmScript(String moduleName, String registryName) {
+    final module = moduleName.toWasmUtf8();
+    final registry = registryName.toWasmUtf8();
+    try {
+      final result = WasmScriptingWeb.fileRegisterWasmScript.callAsFunction(
+          null, _pointer.toJS, module.pointer, registry.pointer);
+      return (result as js.JSNumber).toDartInt != 0;
+    } finally {
+      module.dispose();
+      registry.dispose();
+    }
+  }
+
+  @override
   void clearViewModelInstances() {
     RiveWasm.clearRuntimeViewModelInstances.callAsFunction(null, _pointer.toJS);
   }
@@ -503,8 +631,13 @@ class WebRiveFile extends File {
   // last since the recorder must outlive everything it recorded.
   final Factory? _ownedSession;
 
+  static double _interpolatorTransformCallback(int handle, double factor) =>
+      InterpolatorCallbacks.transform(handle, factor);
+
   WebRiveFile(this._pointer, this.riveFactory, [this._ownedSession]) {
     _finalizer.attach(this, _pointer.toJS, detach: this);
+    RiveWasm.initInterpolatorCallbacks
+        ?.callAsFunction(null, _interpolatorTransformCallback.toJS);
     RiveWasm.initBindingCallbacks.callAsFunctionEx(
       null,
       _vmNumberCallback.toJS,
@@ -597,6 +730,17 @@ class WebRiveFile extends File {
       return null;
     }
     return WebRiveArtboard(ptr, riveFactory);
+  }
+
+  @override
+  ArtboardPaintSource? artboardPaintSource(int index) {
+    final make = RiveWasm.artboardPaintSourceMake;
+    if (make == null) {
+      return null;
+    }
+    final ptr =
+        toPointer(make.callAsFunction(null, _pointer.toJS, index.toJS));
+    return ptr == 0 ? null : WebArtboardPaintSource(ptr);
   }
 
   @override
@@ -740,6 +884,17 @@ class WebRiveFile extends File {
       return null;
     }
     return WebViewModelRuntime(ptr);
+  }
+
+  @override
+  String? frameBoundary() {
+    final service = RiveWasm.riveFileFrameBoundary;
+    if (service == null) {
+      return null;
+    }
+    // Owned by the file and valid until the next call, so copy it out now.
+    final warning = toPointer(service.callAsFunction(null, _pointer.toJS));
+    return warning == 0 ? null : RiveWasm.toDartString(warning);
   }
 
   @override
@@ -1521,14 +1676,90 @@ class WebRiveArtboard extends Artboard {
   }
 
   @override
+  bool drawThroughMesh(
+    covariant WebRiveRenderer renderer,
+    double resolution,
+    covariant WebVertexRenderBuffer vertices,
+    covariant WebVertexRenderBuffer uvs,
+    covariant WebIndexRenderBuffer indices,
+    BlendMode blendMode,
+    double opacity,
+  ) {
+    final draw = RiveWasm.artboardDrawThroughMesh;
+    if (draw == null) {
+      return false;
+    }
+    assert(riveFactory.isValidRenderer(renderer));
+    final drew = draw.callAsFunctionEx(
+      null,
+      pointer.toJS,
+      renderer.jsRendererPtr,
+      resolution.toJS,
+      vertices.pointer,
+      uvs.pointer,
+      indices.pointer,
+      vertices.elementCount.toJS,
+      indices.elementCount.toJS,
+      blendMode.index.toJS,
+      opacity.toJS,
+    );
+    return _jsTrue(drew);
+  }
+
+  static bool _jsTrue(js.JSAny? value) => value.isA<js.JSBoolean>()
+      ? (value as js.JSBoolean).toDart
+      : value.isA<js.JSNumber>() && (value as js.JSNumber).toDartInt != 0;
+
+  @override
+  Mat2D? meshUVTransform(double resolution) {
+    final uvTransform = RiveWasm.artboardMeshUVTransform;
+    if (uvTransform == null) {
+      return null;
+    }
+    final ok = uvTransform.callAsFunction(
+        null, pointer.toJS, resolution.toJS, RiveWasm.scratchBufferPtr);
+    if (!_jsTrue(ok)) {
+      return null;
+    }
+    return _scratchMat2D();
+  }
+
+  @override
+  double? get rasterResolution {
+    final read = RiveWasm.artboardRasterResolution;
+    if (read == null) {
+      return null;
+    }
+    return (read.callAsFunction(null, pointer.toJS) as js.JSNumber)
+        .toDartDouble;
+  }
+
+  @override
+  Mat2D? get selfTransform {
+    final read = RiveWasm.artboardSelfTransform;
+    if (read == null) {
+      return null;
+    }
+    read.callAsFunction(null, pointer.toJS, RiveWasm.scratchBufferPtr);
+    return _scratchMat2D();
+  }
+
+  Mat2D _scratchMat2D() {
+    final floats = RiveWasm.scratchBufferFloat;
+    final m = Mat2D();
+    for (int i = 0; i < 6; i++) {
+      m[i] = floats[i];
+    }
+    return m;
+  }
+
+  @override
   void advanceFrameId() {
     RiveWasm.riveAdvanceFrameId.callAsFunction(null);
   }
 
   @override
-  void reset() {
-    RiveWasm.artboardReset.callAsFunction(null, pointer.toJS);
-  }
+  void reset() {}
 
   @override
   StateMachine? defaultStateMachine() {
@@ -1663,6 +1894,10 @@ class WebRiveArtboard extends Artboard {
   @override
   bool get frameOrigin => _wasmBool(
       RiveWasm.artboardGetFrameOrigin.callAsFunction(null, pointer.toJS));
+
+  @override
+  bool get didChange => _wasmBool(
+      RiveWasm.artboardDidChange.callAsFunction(null, pointer.toJS));
 
   @override
   set frameOrigin(bool value) => RiveWasm.artboardSetFrameOrigin
@@ -1997,6 +2232,10 @@ class WebRiveArtboard extends Artboard {
       .callAsFunction(null, _pointer.toJS, isStack.toJS);
 
   @override
+  void virtualGridCell(int column, int row) => RiveWasm.artboardVirtualGridCell
+      ?.callAsFunction(null, _pointer.toJS, column.toJS, row.toJS);
+
+  @override
   void widthIntrinsicallySizeOverride(bool intrinsic) =>
       RiveWasm.artboardWidthIntrinsicallySizeOverride
           .callAsFunction(null, _pointer.toJS, intrinsic.toJS);
@@ -2019,7 +2258,8 @@ class WebRiveArtboard extends Artboard {
           double p0,
           double p1,
           double p2,
-          double p3) =>
+          double p3,
+          int scriptHandle) =>
       RiveWasm.cascadeLayoutStyle.callAsFunctionEx(
           null,
           _pointer.toJS,
@@ -2030,7 +2270,8 @@ class WebRiveArtboard extends Artboard {
           p0.toJS,
           p1.toJS,
           p2.toJS,
-          p3.toJS);
+          p3.toJS,
+          scriptHandle.toJS);
 
   @override
   void cascadeLayoutStyleBatch(
@@ -2042,7 +2283,8 @@ class WebRiveArtboard extends Artboard {
       double p0,
       double p1,
       double p2,
-      double p3) {
+      double p3,
+      int scriptHandle) {
     // WASM pointers are 32-bit; pack them into a Uint32List and copy into
     // WASM heap as a contiguous uint32_t array (matches uintptr_t on WASM32).
     final ptrs = Uint32List(artboards.length);
@@ -2061,7 +2303,8 @@ class WebRiveArtboard extends Artboard {
         p0.toJS,
         p1.toJS,
         p2.toJS,
-        p3.toJS);
+        p3.toJS,
+        scriptHandle.toJS);
     wasmBuffer.dispose();
   }
 
@@ -2404,10 +2647,16 @@ class WebStateMachine extends StateMachine
       .callAsFunction(null, _pointer.toJS, position.x.toJS, position.y.toJS));
 
   @override
-  HitResult pointerDown(Vec2D position, {int pointerId = 0}) {
+  HitResult pointerDown(Vec2D position,
+      {int pointerId = 0, PointerButton button = PointerButton.primary}) {
     return HitResult.values[(RiveWasm.stateMachineInstancePointerDown
-            .callAsFunction(null, _pointer.toJS, position.x.toJS,
-                position.y.toJS, pointerId.toJS) as js.JSNumber)
+            .callAsFunctionEx(
+                null,
+                _pointer.toJS,
+                position.x.toJS,
+                position.y.toJS,
+                pointerId.toJS,
+                button.index.toJS) as js.JSNumber)
         .toDartInt];
   }
 
@@ -2434,33 +2683,108 @@ class WebStateMachine extends StateMachine
           .toDartInt];
 
   @override
-  HitResult pointerUp(Vec2D position, {int pointerId = 0}) =>
-      HitResult.values[(RiveWasm.stateMachineInstancePointerUp.callAsFunction(
-              null,
-              _pointer.toJS,
-              position.x.toJS,
-              position.y.toJS,
-              pointerId.toJS) as js.JSNumber)
+  HitResult pointerScroll(Vec2D position, ScrollEvent event,
+          {double? timeStamp, int pointerId = 0}) =>
+      HitResult.values[(RiveWasm.stateMachineInstancePointerScroll
+              .callAsFunctionEx(
+                  null,
+                  _pointer.toJS,
+                  position.x.toJS,
+                  position.y.toJS,
+                  event.delta.x.toJS,
+                  event.delta.y.toJS,
+                  event.phase.index.toJS,
+                  (event.precise ? 1 : 0).toJS,
+                  (timeStamp ?? 0).toJS,
+                  pointerId.toJS) as js.JSNumber)
           .toDartInt];
 
   @override
-  HitResult dragStart(Vec2D position, {double? timeStamp}) =>
-      HitResult.values[(RiveWasm.stateMachineInstanceDragStart.callAsFunction(
+  bool wantsScroll(Vec2D position, ScrollEvent event) =>
+      (RiveWasm.stateMachineInstanceWantsScroll.callAsFunctionEx(
               null,
               _pointer.toJS,
               position.x.toJS,
               position.y.toJS,
-              (timeStamp ?? 0).toJS) as js.JSNumber)
+              event.delta.x.toJS,
+              event.delta.y.toJS,
+              event.phase.index.toJS,
+              (event.precise ? 1 : 0).toJS) as js.JSNumber)
+          .toDartInt !=
+      0;
+
+  @override
+  bool hasScrollTargetAt(Vec2D position) =>
+      (RiveWasm.stateMachineInstanceHasScrollTargetAt.callAsFunction(
+                  null, _pointer.toJS, position.x.toJS, position.y.toJS)
+              as js.JSNumber)
+          .toDartInt !=
+      0;
+
+  @override
+  bool listensToButtonAt(Vec2D position, PointerButton button) =>
+      (RiveWasm.stateMachineInstanceListensToButtonAt.callAsFunction(
+              null,
+              _pointer.toJS,
+              position.x.toJS,
+              position.y.toJS,
+              button.index.toJS) as js.JSNumber)
+          .toDartInt !=
+      0;
+
+  @override
+  bool scrollOccludedAt(Vec2D position) =>
+      (RiveWasm.stateMachineInstanceScrollOccludedAt.callAsFunction(
+                  null, _pointer.toJS, position.x.toJS, position.y.toJS)
+              as js.JSNumber)
+          .toDartInt !=
+      0;
+
+  @override
+  bool get hasScrollLatch =>
+      (RiveWasm.stateMachineInstanceHasScrollLatch
+              .callAsFunction(null, _pointer.toJS) as js.JSNumber)
+          .toDartInt !=
+      0;
+
+  @override
+  void cancelScroll() => RiveWasm.stateMachineInstanceCancelScroll
+      .callAsFunction(null, _pointer.toJS);
+
+  @override
+  HitResult pointerUp(Vec2D position,
+          {int pointerId = 0, PointerButton button = PointerButton.primary}) =>
+      HitResult.values[(RiveWasm.stateMachineInstancePointerUp.callAsFunctionEx(
+              null,
+              _pointer.toJS,
+              position.x.toJS,
+              position.y.toJS,
+              pointerId.toJS,
+              button.index.toJS) as js.JSNumber)
           .toDartInt];
 
   @override
-  HitResult dragEnd(Vec2D position, {double? timeStamp}) =>
-      HitResult.values[(RiveWasm.stateMachineInstanceDragEnd.callAsFunction(
+  HitResult dragStart(Vec2D position,
+          {double? timeStamp, PointerButton button = PointerButton.primary}) =>
+      HitResult.values[(RiveWasm.stateMachineInstanceDragStart.callAsFunctionEx(
               null,
               _pointer.toJS,
               position.x.toJS,
               position.y.toJS,
-              (timeStamp ?? 0).toJS) as js.JSNumber)
+              (timeStamp ?? 0).toJS,
+              button.index.toJS) as js.JSNumber)
+          .toDartInt];
+
+  @override
+  HitResult dragEnd(Vec2D position,
+          {double? timeStamp, PointerButton button = PointerButton.primary}) =>
+      HitResult.values[(RiveWasm.stateMachineInstanceDragEnd.callAsFunctionEx(
+              null,
+              _pointer.toJS,
+              position.x.toJS,
+              position.y.toJS,
+              (timeStamp ?? 0).toJS,
+              button.index.toJS) as js.JSNumber)
           .toDartInt];
 
   @override
@@ -3390,11 +3714,6 @@ class WebInternalViewModelInstanceValue<T>
   }
 
   @override
-  advanced() {
-    RiveWasm.setViewModelInstanceAdvanced.callAsFunction(null, _pointer.toJS);
-  }
-
-  @override
   set value(T val) {
     if (suppressCallback) {
       return;
@@ -3697,9 +4016,14 @@ class WebInternalViewModelInstanceTrigger
   WebInternalViewModelInstanceTrigger(super.pointer);
 
   @override
-  applyValue(int val) {
-    RiveWasm.setViewModelInstanceTriggerValue
-        .callAsFunction(null, _pointer.toJS, val.toJS);
+  void fire(int fires) {
+    if (suppressCallback) {
+      return;
+    }
+    suppressCallback = true;
+    RiveWasm.fireViewModelInstanceTrigger
+        .callAsFunction(null, _pointer.toJS, fires.toJS);
+    suppressCallback = false;
   }
 
   @override

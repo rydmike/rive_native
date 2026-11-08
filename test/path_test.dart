@@ -84,4 +84,27 @@ void main() {
       index++;
     }
   });
+
+  // A disposed path hands native a null pointer. The editor still adds
+  // removed paths from stale references (RIVE_NATIVE-5H, -KR, -13V), and
+  // that dereferenced null instead of being skipped. The disposed paths stay
+  // empty: on the web, dispose doesn't flush queued commands, so a disposed
+  // path that still has some rebuilds itself on its next use.
+  test('adding a disposed path is skipped', () {
+    final factory = Factory.flutter;
+    final live = factory.makePath(true)
+      ..addRect(const Offset(0, 0) & const Size(100, 100));
+    final disposed = factory.makePath(true)..dispose();
+
+    final target = factory.makePath(true)
+      ..addPath(disposed, Mat2D())
+      ..addPath(live, Mat2D());
+    expect(target.hasBounds, true);
+
+    final disposedTarget = factory.makePath(true)..dispose();
+    disposedTarget.addPath(live, Mat2D());
+
+    live.dispose();
+    target.dispose();
+  });
 }

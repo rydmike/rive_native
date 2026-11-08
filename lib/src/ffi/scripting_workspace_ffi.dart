@@ -20,11 +20,13 @@ final DynamicLibrary _nativeLib = DynamicLibraryHelper.nativeLib;
 Pointer<Void> Function(
   Pointer<NativeFunction<Void Function(Uint64)>>,
   bool,
+  bool,
 ) _makeScriptingWorkspace = _nativeLib
     .lookup<
         NativeFunction<
             Pointer<Void> Function(
               Pointer<NativeFunction<Void Function(Uint64)>>,
+              Bool,
               Bool,
             )>>('makeScriptingWorkspace')
     .asFunction();
@@ -288,6 +290,40 @@ int Function(Pointer<Void> workspace, Pointer<Void> factory) _requestVM =
         )
         .asFunction();
 
+int Function(
+  Pointer<Void> workspace,
+  int simd,
+  bool forExport,
+  bool debugProbes,
+  bool fuel,
+) _requestCompileWasmAs = _nativeLib
+    .lookup<
+            NativeFunction<
+                Uint64 Function(Pointer<Void>, Uint8, Bool, Bool, Bool)>>(
+        'scriptingWorkspaceRequestCompileWasmAs')
+    .asFunction();
+
+int Function(Pointer<Void> workspace, Pointer<Utf8> scriptId)
+    _requestTranslateToAs = _nativeLib
+        .lookup<NativeFunction<Uint64 Function(Pointer<Void>, Pointer<Utf8>)>>(
+            'scriptingWorkspaceRequestTranslateToAs')
+        .asFunction();
+
+void Function(Pointer<Void> workspace, int simd) _setAsBakeOptions = _nativeLib
+    .lookup<NativeFunction<Void Function(Pointer<Void>, Uint8)>>(
+        'scriptingWorkspaceSetAsBakeOptions')
+    .asFunction();
+
+bool Function(Pointer<Void> workspace) _setBundledRascStd = _nativeLib
+    .lookup<NativeFunction<Bool Function(Pointer<Void>)>>(
+        'scriptingWorkspaceSetBundledRascStd')
+    .asFunction();
+void Function(Pointer<Void> workspace, Pointer<Utf8> dir) _setRascStdDir =
+    _nativeLib
+        .lookup<NativeFunction<Void Function(Pointer<Void>, Pointer<Utf8>)>>(
+            'scriptingWorkspaceSetRascStdDir')
+        .asFunction();
+
 int Function(Pointer<Void> workspace, Pointer<Utf8> scriptId)
     _checkNeedsRecompile = _nativeLib
         .lookup<NativeFunction<Uint64 Function(Pointer<Void>, Pointer<Utf8>)>>(
@@ -488,7 +524,7 @@ ScriptingWorkspaceResponseResultFFI Function(
 class ScriptingWorkspaceFFI extends ScriptingWorkspace {
   late Pointer<Void> _nativeWorkspace;
   NativeCallable<Void Function(Uint64)>? _callable;
-  ScriptingWorkspaceFFI({bool canvasEnabled = false}) {
+  ScriptingWorkspaceFFI({bool canvasEnabled = false, bool netEnabled = false}) {
     _callable = NativeCallable<Void Function(Uint64)>.listener(
       workReadyCallback,
     );
@@ -500,6 +536,7 @@ class ScriptingWorkspaceFFI extends ScriptingWorkspace {
             return _makeScriptingWorkspace(
               callback.nativeFunction,
               canvasEnabled,
+              netEnabled,
             );
           })();
   }
@@ -916,6 +953,68 @@ class ScriptingWorkspaceFFI extends ScriptingWorkspace {
   }
 
   @override
+  Future<WasmModuleResult?> requestCompileWasmAs({
+    WasmSimd simd = WasmSimd.on,
+    bool forExport = false,
+    bool debugProbes = true,
+    bool fuel = false,
+  }) {
+    final workId = _requestCompileWasmAs(
+        _nativeWorkspace, simd.index, forExport, debugProbes, fuel);
+    return registerCompleter(workId);
+  }
+
+  @override
+  void setAsBakeOptions({WasmSimd simd = WasmSimd.on}) =>
+      _setAsBakeOptions(_nativeWorkspace, simd.index);
+
+  @override
+  bool setBundledRascStd() => _setBundledRascStd(_nativeWorkspace);
+
+  @override
+  void setRascStdDir(String dir) {
+    final dirNative = dir.toNativeUtf8(allocator: calloc);
+    _setRascStdDir(_nativeWorkspace, dirNative);
+    calloc.free(dirNative);
+  }
+
+  @override
+  Future<AsTranslation?> requestTranslateToAs(String scriptId) {
+    final scriptIdNative = scriptId.toNativeUtf8(allocator: calloc);
+    final workId = _requestTranslateToAs(_nativeWorkspace, scriptIdNative);
+    calloc.free(scriptIdNative);
+    return registerCompleter(workId);
+  }
+
+  @override
+  Future<HighlightResult> setAnimaScriptSource(
+    String scriptId,
+    String scriptName,
+    String source, {
+    bool highlight = false,
+  }) async {
+    final scriptIdNative = scriptId.toNativeUtf8(allocator: calloc);
+    final scriptNameNative = scriptName.toNativeUtf8(allocator: calloc);
+    final sourceNative = toNativeString(source);
+    // ScriptType::AnimaScript = 5
+    final workId = _setScriptSourceWithType(
+      _nativeWorkspace,
+      scriptIdNative,
+      scriptNameNative,
+      sourceNative,
+      5,
+      highlight,
+    );
+    calloc.free(scriptNameNative);
+    calloc.free(scriptIdNative);
+    if (!highlight) {
+      unawaited(registerCompleter(workId));
+      return HighlightResult(HighlightResultType.unknown);
+    }
+    return registerCompleter(workId);
+  }
+
+  @override
   Future<bool> checkNeedsRecompile(String scriptId) {
     final scriptIdNative = scriptId.toNativeUtf8(allocator: calloc);
     final workId = _checkNeedsRecompile(_nativeWorkspace, scriptIdNative);
@@ -1020,8 +1119,14 @@ class ScriptingWorkspaceFFI extends ScriptingWorkspace {
       ).toDartString();
 }
 
-ScriptingWorkspace makeScriptingWorkspace({bool canvasEnabled = false}) =>
-    ScriptingWorkspaceFFI(canvasEnabled: canvasEnabled);
+ScriptingWorkspace makeScriptingWorkspace({
+  bool canvasEnabled = false,
+  bool netEnabled = false,
+}) =>
+    ScriptingWorkspaceFFI(
+      canvasEnabled: canvasEnabled,
+      netEnabled: netEnabled,
+    );
 
 /// Configures GPU scripting on native. Skips when [renderTexture] is null —
 /// callers without a backing texture (headless/test paths) wouldn't have a

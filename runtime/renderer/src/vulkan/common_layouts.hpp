@@ -14,6 +14,12 @@ namespace rive::gpu::layout
 // more resolve target.
 constexpr static uint32_t MAX_RENDER_PASS_ATTACHMENTS = PLS_PLANE_COUNT + 1;
 
+constexpr VkPipelineVertexInputStateCreateInfo EMPTY_VERTEX_INPUT_STATE = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    .vertexBindingDescriptionCount = 0,
+    .vertexAttributeDescriptionCount = 0,
+};
+
 constexpr VkVertexInputBindingDescription PATH_INPUT_BINDINGS[] = {{
     .binding = 0,
     .stride = sizeof(rive::gpu::PatchVertex),
@@ -59,64 +65,64 @@ constexpr VkPipelineVertexInputStateCreateInfo INTERIOR_TRI_VERTEX_INPUT_STATE =
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .vertexBindingDescriptionCount = std::size(INTERIOR_TRI_INPUT_BINDINGS),
         .pVertexBindingDescriptions = INTERIOR_TRI_INPUT_BINDINGS,
-        .vertexAttributeDescriptionCount =
-            std::size(INTERIOR_TRI_VERTEX_ATTRIBS),
+        .vertexAttributeDescriptionCount = std::size(
+            INTERIOR_TRI_VERTEX_ATTRIBS),
         .pVertexAttributeDescriptions = INTERIOR_TRI_VERTEX_ATTRIBS,
 };
 
 constexpr VkFormat getVkFormat(VertexElementFormat format)
 {
-    switch (format)
-    {
-        case VertexElementFormat::float1:
-            return VK_FORMAT_R32_SFLOAT;
-        case VertexElementFormat::float2:
-            return VK_FORMAT_R32G32_SFLOAT;
-        case VertexElementFormat::float3:
-            return VK_FORMAT_R32G32B32_SFLOAT;
-        case VertexElementFormat::float4:
-            return VK_FORMAT_R32G32B32A32_SFLOAT;
-        case VertexElementFormat::uint8x4:
-            return VK_FORMAT_R8G8B8A8_UINT;
-        case VertexElementFormat::sint8x4:
-            return VK_FORMAT_R8G8B8A8_SINT;
-        case VertexElementFormat::unorm8x4:
-            return VK_FORMAT_R8G8B8A8_UNORM;
-        case VertexElementFormat::snorm8x4:
-            return VK_FORMAT_R8G8B8A8_SNORM;
-        case VertexElementFormat::uint16x2:
-            return VK_FORMAT_R16G16_UINT;
-        case VertexElementFormat::sint16x2:
-            return VK_FORMAT_R16G16_SINT;
-        case VertexElementFormat::unorm16x2:
-            return VK_FORMAT_R16G16_UNORM;
-        case VertexElementFormat::snorm16x2:
-            return VK_FORMAT_R16G16_SNORM;
-        case VertexElementFormat::uint16x4:
-            return VK_FORMAT_R16G16B16A16_UINT;
-        case VertexElementFormat::sint16x4:
-            return VK_FORMAT_R16G16B16A16_SINT;
-        case VertexElementFormat::float16x2:
-            return VK_FORMAT_R16G16_SFLOAT;
-        case VertexElementFormat::float16x4:
-            return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case VertexElementFormat::uint32:
-            return VK_FORMAT_R32_UINT;
-    }
+  switch (format)
+  {
+    case VertexElementFormat::float1:
+      return VK_FORMAT_R32_SFLOAT;
+    case VertexElementFormat::float2:
+      return VK_FORMAT_R32G32_SFLOAT;
+    case VertexElementFormat::float3:
+      return VK_FORMAT_R32G32B32_SFLOAT;
+    case VertexElementFormat::float4:
+      return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case VertexElementFormat::uint8x4:
+      return VK_FORMAT_R8G8B8A8_UINT;
+    case VertexElementFormat::sint8x4:
+      return VK_FORMAT_R8G8B8A8_SINT;
+    case VertexElementFormat::unorm8x4:
+      return VK_FORMAT_R8G8B8A8_UNORM;
+    case VertexElementFormat::snorm8x4:
+      return VK_FORMAT_R8G8B8A8_SNORM;
+    case VertexElementFormat::uint16x2:
+      return VK_FORMAT_R16G16_UINT;
+    case VertexElementFormat::sint16x2:
+      return VK_FORMAT_R16G16_SINT;
+    case VertexElementFormat::unorm16x2:
+      return VK_FORMAT_R16G16_UNORM;
+    case VertexElementFormat::snorm16x2:
+      return VK_FORMAT_R16G16_SNORM;
+    case VertexElementFormat::uint16x4:
+      return VK_FORMAT_R16G16B16A16_UINT;
+    case VertexElementFormat::sint16x4:
+      return VK_FORMAT_R16G16B16A16_SINT;
+    case VertexElementFormat::float16x2:
+      return VK_FORMAT_R16G16_SFLOAT;
+    case VertexElementFormat::float16x4:
+      return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case VertexElementFormat::uint32:
+      return VK_FORMAT_R32_UINT;
+  }
 }
 
 // Grab these from image_draw_attributes.hpp so that it's constexpr
 template <typename ImageDrawInstance> constexpr auto getImageDrawAttributes()
 {
-    if constexpr (std::is_same_v<ImageDrawInstance, ImageRectInstance>)
-    {
-        return ImageRectInstanceAttributes;
-    }
-    else
-    {
-        static_assert(std::is_same_v<ImageDrawInstance, ImageMeshInstance>);
-        return ImageMeshInstanceAttributes;
-    }
+  if constexpr (std::is_same_v<ImageDrawInstance, ImageRectInstance>)
+  {
+    return ImageRectInstanceAttributes;
+  }
+  else
+  {
+    static_assert(std::is_same_v<ImageDrawInstance, ImageMeshInstance>);
+    return ImageMeshInstanceAttributes;
+  }
 }
 
 // Concatenates the given geometryAttribs with Rive's ImageRect/MeshInstance
@@ -126,27 +132,27 @@ constexpr auto appendImageDrawInstanceAttribs(
     uint32_t binding,
     GeometryAttribs... geometryAttribs)
 {
-    constexpr auto Attributes = getImageDrawAttributes<ImageDrawInstance>();
+  constexpr auto Attributes = getImageDrawAttributes<ImageDrawInstance>();
 
-    constexpr auto ArrayLength =
-        sizeof...(GeometryAttribs) + std::size(Attributes);
-    std::array<VkVertexInputAttributeDescription, ArrayLength> attrs = {
-        geometryAttribs...};
+  constexpr auto ArrayLength = sizeof...(GeometryAttribs) +
+                               std::size(Attributes);
+  std::array<VkVertexInputAttributeDescription, ArrayLength> attrs = {
+      geometryAttribs...};
 
-    for (auto i = 0u; i < std::size(Attributes); i++)
-    {
-        const auto& src = Attributes[i];
-        auto& dest = attrs[i + sizeof...(GeometryAttribs)];
+  for (auto i = 0u; i < std::size(Attributes); i++)
+  {
+    const auto& src = Attributes[i];
+    auto& dest = attrs[i + sizeof...(GeometryAttribs)];
 
-        dest = {
-            .location = src.attributeIndex,
-            .binding = binding,
-            .format = getVkFormat(src.format),
-            .offset = src.byteOffset,
-        };
-    }
+    dest = {
+        .location = src.attributeIndex,
+        .binding = binding,
+        .format = getVkFormat(src.format),
+        .offset = src.byteOffset,
+    };
+  }
 
-    return attrs;
+  return attrs;
 }
 
 constexpr uint32_t ImageRectGeometryBufferBinding = 0;
@@ -163,8 +169,8 @@ constexpr VkVertexInputBindingDescription ImageRectInputBindings[] = {
         .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE,
     },
 };
-constexpr auto ImageRectVertexAttribs =
-    appendImageDrawInstanceAttribs<ImageRectInstance>(
+constexpr auto
+    ImageRectVertexAttribs = appendImageDrawInstanceAttribs<ImageRectInstance>(
         ImageRectImageAttribBufferBinding,
         VkVertexInputAttributeDescription{
             .location = 0,
@@ -200,8 +206,8 @@ constexpr VkVertexInputBindingDescription ImageMeshInputBindings[] = {
         .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE,
     },
 };
-constexpr auto ImageMeshVertexAttribs =
-    appendImageDrawInstanceAttribs<ImageMeshInstance>(
+constexpr auto
+    ImageMeshVertexAttribs = appendImageDrawInstanceAttribs<ImageMeshInstance>(
         ImageMeshImageAttribBufferBinding,
         VkVertexInputAttributeDescription{
             .location = 0,
@@ -223,11 +229,7 @@ constexpr VkPipelineVertexInputStateCreateInfo IMAGE_MESH_VERTEX_INPUT_STATE = {
     .pVertexAttributeDescriptions = ImageMeshVertexAttribs.data(),
 };
 
-constexpr VkPipelineVertexInputStateCreateInfo EMPTY_VERTEX_INPUT_STATE = {
-    .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-    .vertexBindingDescriptionCount = 0,
-    .vertexAttributeDescriptionCount = 0,
-};
+constexpr uint32_t MaxVertexBinding = ImageMeshImageAttribBufferBinding;
 
 constexpr VkPipelineInputAssemblyStateCreateInfo INPUT_ASSEMBLY_TRIANGLE_STRIP =
     {

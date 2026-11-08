@@ -84,3 +84,9 @@ Future<void> awaitWebGLHeadroom() async {
     await Future<void>.delayed(const Duration(milliseconds: 100));
   }
 }
+
+/// Targets with a frame open in the deferred session at [sessionAddress].
+int deferredSessionOpenTargets(int sessionAddress) =>
+    ((RiveWasm.module!['_riveDeferredSessionOpenTargets'] as js.JSFunction)
+            .callAsFunction(null, sessionAddress.toJS) as js.JSNumber)
+        .toDartInt;

@@ -161,6 +161,12 @@ abstract class PointerEvent {
   HitResult get hitResult;
 }
 
+/// The ScrollEvent a script's pointerScroll receives, read back for the hit
+/// result it reported.
+abstract class ScriptScrollEvent {
+  HitResult get hitResult;
+}
+
 /// Test diagnostics implemented by the concrete [LuauState]s; kept off
 /// [LuauState] so adding to it never breaks other implementers.
 abstract interface class LuauStateDiagnostics {
@@ -288,12 +294,6 @@ abstract class LuauState {
   /// Returns 1 if successful, 0 if the image is null.
   int pushAudio(AudioSource audio);
   void pushBlob(String name, Uint8List data);
-
-  /// Advances (resets) script-created view model instances that are detached
-  /// from any bound view model tree. Call once at the end of each frame so
-  /// fired triggers are consumed/re-armed. Mirrors the runtime's
-  /// Artboard::advanceScriptedViewModels.
-  void advanceDetachedViewModels();
 
   /// Looks up a shader by name from the per-VM ScriptingContext (editor) or
   /// file assets (runtime) and pushes the ScriptedShader onto the stack.
@@ -441,7 +441,12 @@ abstract class LuauState {
   ScriptedDataValue dataValueAt(int index);
   ScriptedPath pathAt(int index);
 
-  PointerEvent pushPointerEvent(int id, Vec2D position);
+  /// [hitType] is a ListenerType index; -1 reads as "unknown" in scripts.
+  PointerEvent pushPointerEvent(int id, Vec2D position,
+      {int hitType = -1, double timeStamp = 0});
+  /// [position] and [event]'s delta are in the script's local space.
+  ScriptScrollEvent pushScrollEvent(int id, Vec2D position, ScrollEvent event,
+      {double timeStamp = 0});
   void pushPointerListenerInvocation(int id, Vec2D position,
       Vec2D previousPosition, int listenerType, double timeStamp);
   void pushKeyboardListenerInvocation(
@@ -511,6 +516,10 @@ abstract class LuauState {
 
   /// Gets the current execution timeout in milliseconds.
   int getExecutionTimeout();
+
+  /// Whether the last [pcall] stopped because it ran past the execution
+  /// timeout, rather than on an error of its own.
+  bool get budgetExceeded;
 
   /// Store a generator ref in the scripting context, keyed by asset ID.
   /// This allows ScriptAsset::initScriptedObjectWith() to look up refs

@@ -5,11 +5,14 @@ abstract class Parentable<T> {
 /// Get the top most components (any child that has an ancestor in the set
 /// should be pruned).
 Set<T> tops<T extends Parentable<T>>(Iterable<T> parentables) {
+  // Materialize once: on a lazy iterable every contains below would re-run
+  // the whole chain, quadratic in the selection size.
+  final lookup = parentables is Set<T> ? parentables : parentables.toSet();
   var tips = <T>{};
   outerLoop:
-  for (final item in parentables) {
+  for (final item in lookup) {
     for (T? parent = item.parent; parent != null; parent = parent.parent) {
-      if (parentables.contains(parent)) {
+      if (lookup.contains(parent)) {
         continue outerLoop;
       }
     }

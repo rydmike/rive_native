@@ -32,7 +32,7 @@ Rive Flutter's native macOS plugin
   # (e.g., Prod-debug, Staging-release). See: https://github.com/rive-app/rive-flutter/issues/594
   s.pod_target_xcconfig = { "USER_HEADER_SEARCH_PATHS" => '"$(PODS_TARGET_SRCROOT)/../native/include"',
                             "LIBRARY_SEARCH_PATHS" => "\"$(PODS_TARGET_SRCROOT)/../native/build/macosx/bin/#{rive_build_type}\"",
-                            "OTHER_LDFLAGS" => "#{asan_flag}-Wl,-force_load,$(PODS_TARGET_SRCROOT)/../native/build/macosx/bin/#{rive_build_type}/librive_native.a -lrive -lrive_pls_renderer -lrive_yoga -lrive_harfbuzz -lrive_sheenbidi -lrive_decoders -llibpng -lzlib -llibjpeg -llibwebp -lrive_scripting_workspace -lrasc_front -lspirv_cross -lluau_vm -lluau_compiler -lluau_analyzer -lrust_ffi -lminiaudio -lbrotli -lrive_pathops -lrml",
+                            "OTHER_LDFLAGS" => "#{asan_flag}-Wl,-force_load,$(PODS_TARGET_SRCROOT)/../native/build/macosx/bin/#{rive_build_type}/librive_native.a -lrive -lrive_pls_renderer -lrive_yoga -lrive_harfbuzz -lrive_sheenbidi -lrive_decoders -llibpng -lzlib -llibjpeg -llibwebp -lrive_scripting_workspace -lrasc_front -lspirv_cross -lluau_vm -lluau_compiler -lluau_analyzer -lrust_ffi -lminiaudio -lbrotli -lrive_pathops -lrml -lrive_codec",
                             "OTHER_CFLAGS" => USE_ASAN ? "-fsanitize=address" : "",
                             "CLANG_CXX_LANGUAGE_STANDARD" => "c++17",
                             "CLANG_CXX_LIBRARY" => "libc++" }

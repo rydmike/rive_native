@@ -166,5 +166,30 @@ void main() {
       expect(rgbaAt(100, 80), [76, 58, 78, 255]);
       expect(rgbaAt(100, 150), [36, 19, 35, 255]);
     });
+
+    testWidgets('drawOptimization reaches the texture painter',
+        (tester) async {
+      final artboard = file.defaultArtboard()!;
+      final painter = rive.StateMachinePainter(fit: rive.Fit.fill);
+      addTearDown(painter.dispose);
+      Widget widget(rive.DrawOptimization drawOptimization) => host(
+            rive.RiveArtboardWidget(
+              artboard: artboard,
+              painter: painter,
+              drawOptimization: drawOptimization,
+            ),
+          );
+      rive.DrawOptimization painted() =>
+          ((tester.renderObject(find.byType(rive.RiveArtboardWidget))
+                      as rive.RiveNativeRenderBox)
+                  .rivePainter as rive.ArtboardWidgetPainter)
+              .drawOptimization;
+
+      await tester.pumpWidget(widget(rive.DrawOptimization.alwaysDraw));
+      expect(painted(), rive.DrawOptimization.alwaysDraw);
+
+      await tester.pumpWidget(widget(rive.DrawOptimization.drawWhenChanged));
+      expect(painted(), rive.DrawOptimization.drawWhenChanged);
+    });
   }, skip: headlessRendererSupported ? false : headlessSkipReason);
 }

@@ -12,25 +12,26 @@
 class RiveNativeRendererContext : public rive::RefCnt<RiveNativeRendererContext>
 {
 public:
-    RiveNativeRendererContext(
-        std::unique_ptr<rive::gpu::RenderContext>&& context,
-        void* deviceRetainedCF) :
-        actual(std::move(context)), m_deviceRetainedCF(deviceRetainedCF)
-    {}
+  RiveNativeRendererContext(
+      std::unique_ptr<rive::gpu::RenderContext>&& context,
+      void* deviceRetainedCF)
+      : actual(std::move(context))
+      , m_deviceRetainedCF(deviceRetainedCF)
+  {}
 
-    ~RiveNativeRendererContext()
+  ~RiveNativeRendererContext()
+  {
+    if (m_deviceRetainedCF)
     {
-        if (m_deviceRetainedCF)
-        {
-            CFRelease(m_deviceRetainedCF);
-            m_deviceRetainedCF = nullptr;
-        }
+      CFRelease(m_deviceRetainedCF);
+      m_deviceRetainedCF = nullptr;
     }
+  }
 
-    std::unique_ptr<rive::gpu::RenderContext> actual;
+  std::unique_ptr<rive::gpu::RenderContext> actual;
 
 private:
-    void* m_deviceRetainedCF = nullptr;
+  void* m_deviceRetainedCF = nullptr;
 };
 
 #endif // RENDERER_CONTEXT_HPP

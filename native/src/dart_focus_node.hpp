@@ -22,29 +22,31 @@ namespace rive_native
 class DartFocusNode : public rive::FocusNode
 {
 public:
-    // Create without callbacks (no Focusable)
-    DartFocusNode() = default;
+  // Create without callbacks (no Focusable)
+  DartFocusNode() = default;
 
-    // Create with Dart callbacks (creates internal DartFocusableHelper)
-    // Pass `this` as nodePtr so Dart can look up the FocusNode in a hashmap
-    DartFocusNode(DartKeyInputCallback keyInput,
-                  DartTextInputCallback textInput,
-                  DartFocusCallback focused,
-                  DartFocusCallback blurred)
+  // Create with Dart callbacks (creates internal DartFocusableHelper)
+  // Pass `this` as nodePtr so Dart can look up the FocusNode in a hashmap
+  DartFocusNode(
+      DartKeyInputCallback keyInput,
+      DartTextInputCallback textInput,
+      DartFocusCallback focused,
+      DartFocusCallback blurred)
+  {
+    if (keyInput || textInput || focused || blurred)
     {
-        if (keyInput || textInput || focused || blurred)
-        {
-            m_helper = std::make_unique<DartFocusableHelper>(this,
-                                                             keyInput,
-                                                             textInput,
-                                                             focused,
-                                                             blurred);
-            setFocusable(m_helper.get());
-        }
+      m_helper = std::make_unique<DartFocusableHelper>(
+          this,
+          keyInput,
+          textInput,
+          focused,
+          blurred);
+      setFocusable(m_helper.get());
     }
+  }
 
 private:
-    std::unique_ptr<DartFocusableHelper> m_helper;
+  std::unique_ptr<DartFocusableHelper> m_helper;
 };
 
 } // namespace rive_native

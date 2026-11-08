@@ -19,6 +19,7 @@ import 'package:rive_native/src/web/rive_deferred_web.dart';
 import 'package:rive_native/src/web/rive_focus_web.dart';
 import 'package:rive_native/src/web/rive_semantic_web.dart';
 import 'package:rive_native/src/web/rive_luau_web.dart';
+import 'package:rive_native/src/web/rive_wasm_web.dart';
 import 'package:rive_native/src/web/rive_markup_web.dart';
 import 'package:rive_native/src/web/rive_pathops_web.dart';
 import 'package:rive_native/src/web/rive_renderer_web.dart';
@@ -148,14 +149,13 @@ base class _WebRenderTexture extends RenderTexture {
     // Create the observer
     final web.ResizeObserver observer = web.ResizeObserver(
       (
-            js.JSArray<web.ResizeObserverEntry> entries,
-            web.ResizeObserver observer,
-          ) {
-            if (canvasElement.isConnected) {
-              texture.textureChanged();
-            }
-          }
-          .toJS,
+        js.JSArray<web.ResizeObserverEntry> entries,
+        web.ResizeObserver observer,
+      ) {
+        if (canvasElement.isConnected) {
+          texture.textureChanged();
+        }
+      }.toJS,
     );
 
     // Connect the observer.
@@ -212,12 +212,12 @@ base class _WebRenderTexture extends RenderTexture {
   /// Restores the default backing policy (layout × DPR, uncapped) so a pooled
   /// renderer cannot leak one consumer's policy to the next.
   void resetBackingPolicy() => setBackingPolicy(
-    fixedWidth: 0,
-    fixedHeight: 0,
-    scaleX: 1,
-    scaleY: 1,
-    maxLogical: 0,
-  );
+        fixedWidth: 0,
+        fixedHeight: 0,
+        scaleX: 1,
+        scaleY: 1,
+        maxLogical: 0,
+      );
 
   @override
   void dispose() {
@@ -285,6 +285,7 @@ base class _WebRenderTexture extends RenderTexture {
     _resizeObserver = null;
     if (_deferredSessionAddress != 0 && jsRenderContext != null) {
       // Never delete a renderer a session is still bound to.
+      webDeferredAbandonOpenTargets(_deferredSessionAddress);
       webRendererUseDeferredSession(jsRenderContextPtr, 0);
       _deferredSessionAddress = 0;
       _deferredFactory = null;
@@ -328,14 +329,15 @@ base class _WebRenderTexture extends RenderTexture {
     RenderTexturePainter? painter,
     RenderResolution resolution = RenderResolution.defaultValue,
     flutter.Key? key,
-  }) => Stack(
-    children: [
-      Positioned.fill(child: HtmlElementView(viewType: rendererId)),
-      Positioned.fill(
-        child: _RiveNativeWebView(this, painter, resolution, key: key),
-      ),
-    ],
-  );
+  }) =>
+      Stack(
+        children: [
+          Positioned.fill(child: HtmlElementView(viewType: rendererId)),
+          Positioned.fill(
+            child: _RiveNativeWebView(this, painter, resolution, key: key),
+          ),
+        ],
+      );
 
   Factory? _deferredFactory;
   // Draws record here even before the worker renderer is ready.
@@ -439,14 +441,18 @@ base class _WebRenderTexture extends RenderTexture {
     if (factory != null && sessionAddress != 0) {
       setDeferredAttachedTexture(factory, this);
     }
+    // Leaving a session, to none or to another: neither the worker detach nor
+    // the inline one closes a frame this texture left open there.
+    if (_deferredSessionAddress != sessionAddress) {
+      webDeferredAbandonOpenTargets(_deferredSessionAddress);
+    }
     if (_canvasTransferred) {
       // The canvas cannot transfer twice, so reuse the worker renderer and
       // repoint it at the new session.
       _deferredFactory = sessionAddress == 0 ? null : factory;
       _deferredSessionAddress = sessionAddress;
-      _pendingRepoint = _repointWorkerRenderer(sessionAddress)
-          ? null
-          : sessionAddress;
+      _pendingRepoint =
+          _repointWorkerRenderer(sessionAddress) ? null : sessionAddress;
       return;
     }
     _deferredFactory = sessionAddress == 0 ? null : factory;
@@ -495,8 +501,8 @@ base class _WebRenderTexture extends RenderTexture {
       return false;
     }
     RiveWasm.clearRenderer
-    // ignore: deprecated_member_use
-    .callAsFunction(null, jsRenderContext, color.value.toJS);
+        // ignore: deprecated_member_use
+        .callAsFunction(null, jsRenderContext, color.value.toJS);
     return true;
   }
 
@@ -739,8 +745,8 @@ class WasmBuffer {
   js.JSAny get pointer => _pointer;
 
   WasmBuffer(this.size)
-    : _pointer =
-          RiveWasm.allocateBuffer.callAsFunction(null, size.toJS) as js.JSAny {
+      : _pointer = RiveWasm.allocateBuffer.callAsFunction(null, size.toJS)
+            as js.JSAny {
     _data = RiveWasm.heap((_pointer as js.JSNumber).toDartInt, size);
   }
 
@@ -853,31 +859,28 @@ class RiveWasm {
   // scratchBuffer which doesn't work with SharedArrayBuffer.
   static Float32List get scratchBufferFloat {
     return (_heapViewF32.callAsFunction(
-              null,
-              scratchBufferPtr,
-              (scratchBufferSize ~/ 4).toJS,
-            )
-            as js.JSFloat32Array)
+      null,
+      scratchBufferPtr,
+      (scratchBufferSize ~/ 4).toJS,
+    ) as js.JSFloat32Array)
         .toDart;
   }
 
   static Uint8List get scratchBuffer {
     return (_heapViewU8.callAsFunction(
-              null,
-              scratchBufferPtr,
-              scratchBufferSize.toJS,
-            )
-            as js.JSUint8Array)
+      null,
+      scratchBufferPtr,
+      scratchBufferSize.toJS,
+    ) as js.JSUint8Array)
         .toDart;
   }
 
   static ByteData get scratchBufferByteData {
     return (_heapDataView.callAsFunction(
-              null,
-              scratchBufferPtr,
-              scratchBufferSize.toJS,
-            )
-            as js.JSDataView)
+      null,
+      scratchBufferPtr,
+      scratchBufferSize.toJS,
+    ) as js.JSDataView)
         .toDart;
   }
 
@@ -919,6 +922,15 @@ class RiveWasm {
   static late js.JSFunction deleteRenderPaint;
   static late js.JSFunction updatePaint;
   static late js.JSFunction paintModulatedImage;
+  // Optional: absent from wasm builds that predate artboard paint sources,
+  // in which case a paint filled with an artboard draws without the image.
+  static js.JSFunction? paintModulatedArtboard;
+  static js.JSFunction? artboardPaintSourceMake;
+  static js.JSFunction? artboardPaintSourceDelete;
+  static js.JSFunction? artboardPaintSourceAdvance;
+  static js.JSFunction? artboardPaintSourceBounds;
+  static js.JSFunction? artboardPaintSourceSetDataContext;
+  static js.JSFunction? artboardPaintSourceUpdateDataBinds;
   static late js.JSFunction drawPath;
   static late js.JSFunction drawImage;
   static late js.JSFunction drawImageMesh;
@@ -928,6 +940,14 @@ class RiveWasm {
   static late js.JSFunction endEditImageMeshInstances;
   static late js.JSFunction deleteImageMeshInstances;
   static late js.JSFunction clipPath;
+  // Layer masking (renderer_binding.cpp). Looked up tolerantly, like the FFI
+  // side: a wasm that predates them degrades to "no masking" instead of
+  // failing to link.
+  static js.JSFunction? rendererAcquireMaskHandle;
+  static js.JSFunction? rendererReleaseMask;
+  static js.JSFunction? rendererBeginMask;
+  static js.JSFunction? rendererBeginMaskSource;
+  static js.JSFunction? rendererEndMask;
   static late js.JSFunction _heapViewU8;
   static late js.JSFunction _heapViewF32;
   static late js.JSFunction _heapViewU16;
@@ -957,6 +977,10 @@ class RiveWasm {
   static late js.JSFunction riveFileAssetSetAudioSource;
   static late js.JSFunction deleteRiveFile;
   static js.JSFunction? riveFileSetScriptingVM;
+  static js.JSFunction? riveFileStartScripts;
+  // Absent from builds made before the wasm scripts' frame service.
+  static js.JSFunction? riveFileFrameBoundary;
+  static js.JSObject? riveScripting;
   static late js.JSFunction deleteFileAsset;
   static js.JSFunction? requestSerializedViewModelInstance;
   static late js.JSFunction clearRuntimeViewModelInstances;
@@ -1035,7 +1059,6 @@ class RiveWasm {
   static late js.JSFunction deleteViewModelRuntime;
   static late js.JSFunction artboardDraw;
   static late js.JSFunction artboardDrawInternal;
-  static late js.JSFunction artboardReset;
   static late js.JSFunction artboardName;
   static late js.JSFunction artboardGetInnerPointer;
   static late js.JSFunction deleteArtboardInstance;
@@ -1048,6 +1071,12 @@ class RiveWasm {
   static late js.JSFunction componentGetWorldTransform;
   static late js.JSFunction componentSetWorldTransform;
   static late js.JSFunction artboardGetRenderTransform;
+  // Newer than some prebuilt modules; null there, which draws undeformed.
+  static js.JSFunction? artboardMeshUVTransform;
+  static js.JSFunction? artboardDrawThroughMesh;
+  static js.JSFunction? artboardSelfTransform;
+  static js.JSFunction? artboardRasterResolution;
+  static js.JSFunction? setOffscreenDisplayScale;
   static late js.JSFunction artboardSetRenderTransform;
   static late js.JSFunction componentGetScaleX;
   static late js.JSFunction componentSetScaleX;
@@ -1063,6 +1092,7 @@ class RiveWasm {
   static late js.JSFunction artboardAnimationNamed;
   static late js.JSFunction artboardSetFrameOrigin;
   static late js.JSFunction artboardGetFrameOrigin;
+  static late js.JSFunction artboardDidChange;
   static late js.JSFunction animationInstanceName;
   static late js.JSFunction animationInstanceAdvance;
   static late js.JSFunction animationInstanceApply;
@@ -1113,6 +1143,13 @@ class RiveWasm {
   static late js.JSFunction stateMachineInstancePointerUp;
   static late js.JSFunction stateMachineInstancePointerMove;
   static late js.JSFunction stateMachineInstancePointerExit;
+  static late js.JSFunction stateMachineInstancePointerScroll;
+  static late js.JSFunction stateMachineInstanceWantsScroll;
+  static late js.JSFunction stateMachineInstanceHasScrollTargetAt;
+  static late js.JSFunction stateMachineInstanceListensToButtonAt;
+  static late js.JSFunction stateMachineInstanceScrollOccludedAt;
+  static late js.JSFunction stateMachineInstanceHasScrollLatch;
+  static late js.JSFunction stateMachineInstanceCancelScroll;
   static late js.JSFunction stateMachineInstanceDragStart;
   static late js.JSFunction stateMachineInstanceDragEnd;
   static late js.JSFunction stateMachineInstanceSubmitGamepadsFromBuffer;
@@ -1158,6 +1195,8 @@ class RiveWasm {
   static late js.JSFunction artboardHeightOverride;
   static late js.JSFunction artboardParentIsRow;
   static late js.JSFunction artboardParentIsStack;
+  // Null on a wasm build older than this binding.
+  static js.JSFunction? artboardVirtualGridCell;
   static late js.JSFunction artboardWidthIntrinsicallySizeOverride;
   static late js.JSFunction artboardHeightIntrinsicallySizeOverride;
   static late js.JSFunction updateLayoutBounds;
@@ -1185,13 +1224,12 @@ class RiveWasm {
   static late js.JSFunction setViewModelInstanceColorValue;
   static late js.JSFunction setViewModelInstanceStringValue;
   static late js.JSFunction setViewModelInstanceBooleanValue;
-  static late js.JSFunction setViewModelInstanceTriggerValue;
+  static late js.JSFunction fireViewModelInstanceTrigger;
   static late js.JSFunction setViewModelInstanceAssetValue;
   static late js.JSFunction viewModelInstanceAssetImageRenderImage;
   static late js.JSFunction viewModelInstanceAssetImageResolveRuntimeIndex;
   static late js.JSFunction viewModelInstanceAssetFontResolveRuntimeIndex;
   static late js.JSFunction setViewModelInstanceArtboardValue;
-  static late js.JSFunction setViewModelInstanceAdvanced;
   static late js.JSFunction setViewModelInstanceEnumValue;
   static late js.JSFunction setViewModelInstanceSymbolListIndexValue;
   static late js.JSFunction setViewModelInstanceListValue;
@@ -1223,6 +1261,7 @@ class RiveWasm {
   static late js.JSFunction setViewModelInstanceViewModelValue;
   static late js.JSFunction setViewModelInstanceViewModelCallback;
   static late js.JSFunction initBindingCallbacks;
+  static late js.JSFunction? initInterpolatorCallbacks;
 
   // Focus-related artboard/state machine functions
   // These require WITH_RIVE_TOOLS (editor builds only)
@@ -1284,6 +1323,12 @@ class RiveWasm {
   static late js.JSFunction rawTextInputSetSeparateSelectionText;
   static late js.JSFunction rawTextInputGetObscured;
   static late js.JSFunction rawTextInputSetObscured;
+  static late js.JSFunction rawTextInputGetMaxCharacters;
+  static late js.JSFunction rawTextInputSetMaxCharacters;
+  static late js.JSFunction rawTextInputGetMaxLines;
+  static late js.JSFunction rawTextInputSetMaxLines;
+  static late js.JSFunction rawTextInputGetHugsWidth;
+  static late js.JSFunction rawTextInputSetHugsWidth;
   static late js.JSFunction rawTextInputGetText;
   static late js.JSFunction rawTextInputSetText;
   static late js.JSFunction rawTextInputSetTextPreserveCursor;
@@ -1386,20 +1431,38 @@ class RiveWasm {
     deleteRenderPaint = module['_deleteRenderPaint'] as js.JSFunction;
     updatePaint = module['_updatePaint'] as js.JSFunction;
     paintModulatedImage = module['_paintModulatedImage'] as js.JSFunction;
+    paintModulatedArtboard =
+        module['_paintModulatedArtboard'] as js.JSFunction?;
+    artboardPaintSourceMake =
+        module['_artboardPaintSourceMake'] as js.JSFunction?;
+    artboardPaintSourceDelete =
+        module['_artboardPaintSourceDelete'] as js.JSFunction?;
+    artboardPaintSourceAdvance =
+        module['_artboardPaintSourceAdvance'] as js.JSFunction?;
+    artboardPaintSourceBounds =
+        module['_artboardPaintSourceBounds'] as js.JSFunction?;
+    artboardPaintSourceSetDataContext =
+        module['_artboardPaintSourceSetDataContext'] as js.JSFunction?;
+    artboardPaintSourceUpdateDataBinds =
+        module['_artboardPaintSourceUpdateDataBinds'] as js.JSFunction?;
     drawPath = module['_drawPath'] as js.JSFunction;
     drawImage = module['_drawImage'] as js.JSFunction;
     drawImageMesh = module['_drawImageMesh'] as js.JSFunction;
-    drawImageMeshInstanced =
-        module['_drawImageMeshInstanced'] as js.JSFunction;
-    makeImageMeshInstances =
-        module['_makeImageMeshInstances'] as js.JSFunction;
-    editImageMeshInstances =
-        module['_editImageMeshInstances'] as js.JSFunction;
+    drawImageMeshInstanced = module['_drawImageMeshInstanced'] as js.JSFunction;
+    makeImageMeshInstances = module['_makeImageMeshInstances'] as js.JSFunction;
+    editImageMeshInstances = module['_editImageMeshInstances'] as js.JSFunction;
     endEditImageMeshInstances =
         module['_endEditImageMeshInstances'] as js.JSFunction;
     deleteImageMeshInstances =
         module['_deleteImageMeshInstances'] as js.JSFunction;
     clipPath = module['_clipPath'] as js.JSFunction;
+    rendererAcquireMaskHandle =
+        module['_rendererAcquireMaskHandle'] as js.JSFunction?;
+    rendererReleaseMask = module['_rendererReleaseMask'] as js.JSFunction?;
+    rendererBeginMask = module['_rendererBeginMask'] as js.JSFunction?;
+    rendererBeginMaskSource =
+        module['_rendererBeginMaskSource'] as js.JSFunction?;
+    rendererEndMask = module['_rendererEndMask'] as js.JSFunction?;
     trimPathEffectPath = module['_trimPathEffectPath'] as js.JSFunction;
     makeTrimPathEffect = module['_makeTrimPathEffect'] as js.JSFunction;
     deleteTrimPathEffect = module['_deleteTrimPathEffect'] as js.JSFunction;
@@ -1438,9 +1501,8 @@ class RiveWasm {
     // Allocate the scratch buffer.
     allocateBuffer = module["_allocateBuffer"] as js.JSFunction;
     deleteBuffer = module["_deleteBuffer"] as js.JSFunction;
-    scratchBufferPtr =
-        allocateBuffer.callAsFunction(null, scratchBufferSize.toJS)
-            as js.JSNumber;
+    scratchBufferPtr = allocateBuffer.callAsFunction(
+        null, scratchBufferSize.toJS) as js.JSNumber;
     _heapViewU8 = module["heapViewU8"] as js.JSFunction;
     _heapViewF32 = module["heapViewF32"] as js.JSFunction;
     _heapViewU16 = module["heapViewU16"] as js.JSFunction;
@@ -1458,6 +1520,10 @@ class RiveWasm {
     deleteRiveFile = module['_deleteRiveFile'] as js.JSFunction;
     riveFileSetScriptingVM =
         module['_riveFileSetScriptingVM'] as js.JSFunction?;
+    // Only builds with the wasm script module backend carry these.
+    riveFileStartScripts = module['_riveFileStartScripts'] as js.JSFunction?;
+    riveFileFrameBoundary = module['_riveFileFrameBoundary'] as js.JSFunction?;
+    riveScripting = module['riveScripting'] as js.JSObject?;
     clearRuntimeViewModelInstances =
         module['_clearRuntimeViewModelInstances'] as js.JSFunction;
     requestSerializedViewModelInstance =
@@ -1607,7 +1673,6 @@ class RiveWasm {
     deleteViewModelRuntime = module['_deleteViewModelRuntime'] as js.JSFunction;
     artboardDraw = module['_artboardDraw'] as js.JSFunction;
     artboardDrawInternal = module['_artboardDrawInternal'] as js.JSFunction;
-    artboardReset = module['_artboardReset'] as js.JSFunction;
     artboardName = module['_artboardName'] as js.JSFunction;
     artboardGetInnerPointer =
         module['_artboardGetInnerPointer'] as js.JSFunction;
@@ -1626,6 +1691,15 @@ class RiveWasm {
         module['_componentSetWorldTransform'] as js.JSFunction;
     artboardGetRenderTransform =
         module['_artboardGetRenderTransform'] as js.JSFunction;
+    artboardMeshUVTransform =
+        module['_artboardMeshUVTransform'] as js.JSFunction?;
+    artboardDrawThroughMesh =
+        module['_artboardDrawThroughMesh'] as js.JSFunction?;
+    artboardSelfTransform = module['_artboardSelfTransform'] as js.JSFunction?;
+    artboardRasterResolution =
+        module['_artboardRasterResolution'] as js.JSFunction?;
+    setOffscreenDisplayScale =
+        module['_setOffscreenDisplayScale'] as js.JSFunction?;
     artboardSetRenderTransform =
         module['_artboardSetRenderTransform'] as js.JSFunction;
     componentGetScaleX = module['_componentGetScaleX'] as js.JSFunction;
@@ -1643,6 +1717,7 @@ class RiveWasm {
     artboardAnimationNamed = module['_artboardAnimationNamed'] as js.JSFunction;
     artboardSetFrameOrigin = module['_artboardSetFrameOrigin'] as js.JSFunction;
     artboardGetFrameOrigin = module['_artboardGetFrameOrigin'] as js.JSFunction;
+    artboardDidChange = module['_artboardDidChange'] as js.JSFunction;
     animationInstanceName = module['_animationInstanceName'] as js.JSFunction;
     animationInstanceAdvance =
         module['_animationInstanceAdvance'] as js.JSFunction;
@@ -1737,6 +1812,20 @@ class RiveWasm {
         module['_stateMachineInstancePointerMove'] as js.JSFunction;
     stateMachineInstancePointerExit =
         module['_stateMachineInstancePointerExit'] as js.JSFunction;
+    stateMachineInstancePointerScroll =
+        module['_stateMachineInstancePointerScroll'] as js.JSFunction;
+    stateMachineInstanceWantsScroll =
+        module['_stateMachineInstanceWantsScroll'] as js.JSFunction;
+    stateMachineInstanceHasScrollTargetAt =
+        module['_stateMachineInstanceHasScrollTargetAt'] as js.JSFunction;
+    stateMachineInstanceListensToButtonAt =
+        module['_stateMachineInstanceListensToButtonAt'] as js.JSFunction;
+    stateMachineInstanceScrollOccludedAt =
+        module['_stateMachineInstanceScrollOccludedAt'] as js.JSFunction;
+    stateMachineInstanceHasScrollLatch =
+        module['_stateMachineInstanceHasScrollLatch'] as js.JSFunction;
+    stateMachineInstanceCancelScroll =
+        module['_stateMachineInstanceCancelScroll'] as js.JSFunction;
     stateMachineInstanceDragStart =
         module['_stateMachineInstanceDragStart'] as js.JSFunction;
     stateMachineInstanceDragEnd =
@@ -1799,6 +1888,8 @@ class RiveWasm {
     artboardHeightOverride = module['_artboardHeightOverride'] as js.JSFunction;
     artboardParentIsRow = module['_artboardParentIsRow'] as js.JSFunction;
     artboardParentIsStack = module['_artboardParentIsStack'] as js.JSFunction;
+    artboardVirtualGridCell =
+        module['_artboardVirtualGridCell'] as js.JSFunction?;
     artboardWidthIntrinsicallySizeOverride =
         module['_artboardWidthIntrinsicallySizeOverride'] as js.JSFunction;
     artboardHeightIntrinsicallySizeOverride =
@@ -1844,8 +1935,8 @@ class RiveWasm {
         module['_setViewModelInstanceStringValue'] as js.JSFunction;
     setViewModelInstanceBooleanValue =
         module['_setViewModelInstanceBooleanValue'] as js.JSFunction;
-    setViewModelInstanceTriggerValue =
-        module['_setViewModelInstanceTriggerValue'] as js.JSFunction;
+    fireViewModelInstanceTrigger =
+        module['_fireViewModelInstanceTrigger'] as js.JSFunction;
     setViewModelInstanceAssetValue =
         module['_setViewModelInstanceAssetValue'] as js.JSFunction;
     viewModelInstanceAssetImageRenderImage =
@@ -1858,8 +1949,6 @@ class RiveWasm {
             as js.JSFunction;
     setViewModelInstanceArtboardValue =
         module['_setViewModelInstanceArtboardValue'] as js.JSFunction;
-    setViewModelInstanceAdvanced =
-        module['_setViewModelInstanceAdvanced'] as js.JSFunction;
     setViewModelInstanceEnumValue =
         module['_setViewModelInstanceEnumValue'] as js.JSFunction;
     setViewModelInstanceSymbolListIndexValue =
@@ -1914,6 +2003,8 @@ class RiveWasm {
     setViewModelInstanceViewModelCallback =
         module['_setViewModelInstanceViewModelCallback'] as js.JSFunction;
     initBindingCallbacks = module['initBindingCallbacks'] as js.JSFunction;
+    initInterpolatorCallbacks =
+        module['initInterpolatorCallbacks'] as js.JSFunction?;
 
     // Focus-related artboard/state machine functions
     artboardRootFocusDataCount =
@@ -1930,8 +2021,7 @@ class RiveWasm {
         module['_stateMachineSetExternalFocusManager'] as js.JSFunction;
     stateMachineHasFocusNodes =
         module['_stateMachineHasFocusNodes'] as js.JSFunction;
-    stateMachineFocusState =
-        module['_stateMachineFocusState'] as js.JSFunction;
+    stateMachineFocusState = module['_stateMachineFocusState'] as js.JSFunction;
 
     deleteDashPathEffect = module['_deleteDashPathEffect'] as js.JSFunction;
     makeDashPathEffect = module['_makeDashPathEffect'] as js.JSFunction;
@@ -2034,6 +2124,18 @@ class RiveWasm {
         module['_rawTextInputGetObscured'] as js.JSFunction;
     rawTextInputSetObscured =
         module['_rawTextInputSetObscured'] as js.JSFunction;
+    rawTextInputGetMaxCharacters =
+        module['_rawTextInputGetMaxCharacters'] as js.JSFunction;
+    rawTextInputSetMaxCharacters =
+        module['_rawTextInputSetMaxCharacters'] as js.JSFunction;
+    rawTextInputGetMaxLines =
+        module['_rawTextInputGetMaxLines'] as js.JSFunction;
+    rawTextInputSetMaxLines =
+        module['_rawTextInputSetMaxLines'] as js.JSFunction;
+    rawTextInputGetHugsWidth =
+        module['_rawTextInputGetHugsWidth'] as js.JSFunction;
+    rawTextInputSetHugsWidth =
+        module['_rawTextInputSetHugsWidth'] as js.JSFunction;
     rawTextInputGetText = module['_rawTextInputGetText'] as js.JSFunction;
     rawTextInputSetText = module['_rawTextInputSetText'] as js.JSFunction;
     rawTextInputSetTextPreserveCursor =
@@ -2121,6 +2223,10 @@ class _WebRiveNative extends RiveNative {
   RenderTexture makeRenderTexture({bool deferred = false}) =>
       _WebRenderTexture.make(deferred: deferred);
 
+  @override
+  void setRasterDisplayScale(double scale) =>
+      RiveWasm.setOffscreenDisplayScale?.callAsFunction(null, scale.toJS);
+
   /// Destroys the pooled render textures and the shared offscreen probe,
   /// each of which holds a live WebGL context (browsers cap those at ~16
   /// per process) — an idle page drops to zero live contexts. Idle worker
@@ -2188,8 +2294,13 @@ Future<RiveNative?> _loadWasm(String source, String name) async {
         if (module.hasProperty('makeScriptingWorkspace'.toJS).toDart) {
           ScriptingWorkspaceWasm.link(module);
         }
-        if (module.hasProperty('riveVMCreate'.toJS).toDart) {
+        if (riveScriptingLuau &&
+            module.hasProperty('riveVMCreate'.toJS).toDart) {
           LuauStateWasm.link(module);
+        }
+        if (riveScriptingWasm &&
+            module.hasProperty('riveWasmVMBoot'.toJS).toDart) {
+          WasmScriptingWeb.link(module);
         }
         PathOpsWasm.link(module);
         MarkupWasm.link(module);
@@ -2299,18 +2410,18 @@ class _RiveNativeWebViewRenderObject extends RiveNativeRenderBox {
       scaleY,
     ) = switch (renderResolution) {
       FixedRenderResolution(:final width, :final height) => (
-        width,
-        height,
-        1.0,
-        1.0,
-      ),
+          width,
+          height,
+          1.0,
+          1.0,
+        ),
       LayoutRenderResolution(:final scale) => (0, 0, scale, scale),
       DisplayRenderResolution() => (
-        0,
-        0,
-        desiredTransformWidthScale,
-        desiredTransformHeightScale,
-      ),
+          0,
+          0,
+          desiredTransformWidthScale,
+          desiredTransformHeightScale,
+        ),
     };
     return texture.setBackingPolicy(
       fixedWidth: fixedWidth,

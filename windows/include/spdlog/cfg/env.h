@@ -30,11 +30,11 @@ namespace cfg
 {
 inline void load_env_levels(const char* var = "SPDLOG_LEVEL")
 {
-    auto env_val = details::os::getenv(var);
-    if (!env_val.empty())
-    {
-        helpers::load_levels(env_val);
-    }
+  auto env_val = details::os::getenv(var);
+  if (!env_val.empty())
+  {
+    helpers::load_levels(env_val);
+  }
 }
 
 } // namespace cfg
